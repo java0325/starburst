@@ -29,6 +29,15 @@
       border-radius: 50%; animation: spin 0.8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    /* ── 차트 타입 버튼 ── */
+    .ct-bar { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+    .ct-btn {
+      padding: 3px 9px; border-radius: 5px; font-size: 11px; cursor: pointer;
+      border: 1px solid #334155; background: #0f172a; color: #64748b;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .ct-btn:hover { background: #1e293b; color: #e2e8f0; border-color: #475569; }
+    .ct-btn.ct-active { background: #312e81; border-color: #6366f1; color: #a5b4fc; font-weight: 600; }
   </style>
 </head>
 <body class="h-screen flex overflow-hidden">
@@ -193,6 +202,87 @@
     return id;
   }
 
+  // ── 차트 타입 전환 ─────────────────────────────────────────────────────────
+  const _chartStore = {};
+
+  const CT_TYPES = [
+    { key: 'bar',        label: '📊 막대' },
+    { key: 'horizontal', label: '↔ 가로막대' },
+    { key: 'line',       label: '📈 라인' },
+    { key: 'area',       label: '🌊 영역' },
+    { key: 'pie',        label: '🥧 파이' },
+    { key: 'scatter',    label: '⬤ 산점도' },
+  ];
+
+  function detectInitType(chartData) {
+    if (!chartData?.data?.[0]) return 'bar';
+    const t = chartData.data[0];
+    if (t.type === 'pie') return 'pie';
+    if (t.orientation === 'h') return 'horizontal';
+    if (t.type === 'scatter') {
+      if (t.fill) return 'area';
+      return (t.mode || '').includes('lines') ? 'line' : 'scatter';
+    }
+    return 'bar';
+  }
+
+  function _buildTrace(type, xVals, yVals) {
+    const COLORS = { bar: '#6366f1', line: '#22d3ee', area: '#6366f1', scatter: '#f59e0b', horizontal: '#8b5cf6' };
+    if (type === 'pie') {
+      return { type: 'pie', labels: xVals, values: yVals, hole: 0.38,
+               textinfo: 'label+percent', hoverinfo: 'label+value+percent',
+               marker: { colors: ['#6366f1','#8b5cf6','#22d3ee','#f59e0b','#10b981','#ef4444',
+                                   '#f97316','#06b6d4','#84cc16','#e879f9','#fb7185','#34d399'] } };
+    }
+    if (type === 'line') {
+      return { type: 'scatter', mode: 'lines+markers', x: xVals, y: yVals,
+               line: { color: COLORS.line, width: 2 }, marker: { size: 6, color: COLORS.line } };
+    }
+    if (type === 'area') {
+      return { type: 'scatter', mode: 'lines', x: xVals, y: yVals, fill: 'tozeroy',
+               line: { color: COLORS.area, width: 2 }, fillcolor: 'rgba(99,102,241,0.15)' };
+    }
+    if (type === 'scatter') {
+      return { type: 'scatter', mode: 'markers', x: xVals, y: yVals,
+               marker: { color: COLORS.scatter, size: 9, opacity: 0.8 } };
+    }
+    if (type === 'horizontal') {
+      return { type: 'bar', orientation: 'h', y: xVals, x: yVals,
+               marker: { color: COLORS.horizontal } };
+    }
+    return { type: 'bar', x: xVals, y: yVals, marker: { color: COLORS.bar } };
+  }
+
+  function _buildLayout(type, n) {
+    const isPie = type === 'pie';
+    const isH   = type === 'horizontal';
+    const angle  = n > 15 ? -45 : (n > 6 ? -30 : 0);
+    const bMargin = n > 15 ? 140 : (n > 6 ? 100 : 60);
+    const base = {
+      paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+      font: { color: '#94a3b8', size: 12 },
+      showlegend: isPie,
+      margin: isPie ? { l:20, r:20, t:20, b:20 } : isH ? { l:110, r:20, t:10, b:40 } : { l:55, r:20, t:10, b:bMargin },
+    };
+    if (!isPie) {
+      base.xaxis = { gridcolor: '#1e293b', tickfont: { color: '#94a3b8', size: 10 }, tickangle: isH ? 0 : angle };
+      base.yaxis = { gridcolor: '#1e293b', tickfont: { color: '#94a3b8', size: 10 } };
+    }
+    return base;
+  }
+
+  function changeChartType(chartId, newType) {
+    const s = _chartStore[chartId];
+    if (!s) return;
+    s.current = newType;
+    const trace = _buildTrace(newType, s.x, s.y);
+    const layout = _buildLayout(newType, s.x.length);
+    Plotly.react(chartId, [trace], layout, { responsive: true, displayModeBar: true,
+      modeBarButtonsToRemove: ['sendDataToCloud'] });
+    document.querySelectorAll(`[data-cid="${chartId}"]`).forEach(b =>
+      b.classList.toggle('ct-active', b.dataset.type === newType));
+  }
+
   function replaceWithResult(loadingId, result) {
     const el = document.getElementById(loadingId);
     if (!el) return;
@@ -204,6 +294,18 @@
     const rows    = result.rows || [];
     const columns = result.columns || [];
     const analysis = result.analysis || {};
+    const hasChart = !!result.chart;
+    const initType = hasChart ? detectInitType(result.chart) : 'bar';
+
+    // 차트 타입 버튼
+    const ctBtns = hasChart ? `
+      <div class="ct-bar">
+        ${CT_TYPES.map(t => `
+          <button class="ct-btn${t.key === initType ? ' ct-active' : ''}"
+                  data-cid="${chartId}" data-type="${t.key}"
+                  onclick="changeChartType('${chartId}','${t.key}')">${t.label}</button>
+        `).join('')}
+      </div>` : '';
 
     // 테이블 HTML
     const tableHtml = rows.length > 0 ? `
@@ -223,6 +325,8 @@
       </div>
     ` : '<p class="text-slate-500 text-xs mt-2">결과 없음</p>';
 
+    const chartH = rows.length > 15 ? 420 : 320;
+
     el.outerHTML = `
       <div class="flex justify-start">
         <div class="bot-bubble w-full max-w-3xl p-4">
@@ -235,8 +339,11 @@
           </div>
           <p class="text-slate-400 text-xs mb-3">${escHtml(analysis.description || '')}</p>
 
-          <!-- 차트 -->
-          ${result.chart ? `<div id="${chartId}" class="w-full rounded-lg overflow-hidden" style="height:320px"></div>` : ''}
+          <!-- 차트 타입 버튼 + 차트 -->
+          ${hasChart ? `
+            ${ctBtns}
+            <div id="${chartId}" class="w-full rounded-lg overflow-hidden" style="height:${chartH}px"></div>
+          ` : ''}
 
           <!-- 데이터 테이블 토글 -->
           <div class="mt-3">
@@ -267,13 +374,16 @@
       </div>
     `;
 
-    // Plotly 차트 렌더링
-    if (result.chart) {
+    // Plotly 초기 렌더링 + 데이터 스토어 저장
+    if (hasChart) {
       const chartEl = document.getElementById(chartId);
       if (chartEl) {
+        const trace0 = result.chart.data[0] || {};
+        const xVals = trace0.x || trace0.labels || [];
+        const yVals = trace0.y || trace0.values || [];
+        _chartStore[chartId] = { x: xVals, y: yVals, current: initType };
         Plotly.newPlot(chartId, result.chart.data, result.chart.layout, {
-          responsive: true,
-          displayModeBar: true,
+          responsive: true, displayModeBar: true,
           modeBarButtonsToRemove: ['sendDataToCloud'],
         });
       }

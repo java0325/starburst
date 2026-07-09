@@ -25,11 +25,17 @@ SQL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sql")
 ANALYSES = [
     {
         "id": "00",
-        "name": "스키마 전체 개요",
-        "keywords": ["스키마", "테이블 목록", "카탈로그", "개요", "어떤 테이블", "전체 목록", "테이블이 뭐"],
-        "description": "TPC-DS 카탈로그의 스키마와 테이블 24개 목록을 조회합니다.",
-        "chart_type": None,
-        "query_index": 2,
+        "name": "전체 테이블 정보",
+        "keywords": [
+            "전체 테이블", "테이블 정보", "테이블 목록", "테이블 건수", "테이블이 뭐",
+            "스키마", "컬럼 정보", "카탈로그", "개요", "어떤 테이블", "전체 목록",
+            "데이터 구조", "db 구조", "테이블 구조", "데이터베이스 구조", "테이블별",
+        ],
+        "description": "TPC-DS sf1 스키마 24개 테이블의 건수·컬럼수·핵심 설명을 한눈에 요약합니다.",
+        "chart_type": "bar",
+        "chart_x": "테이블명",
+        "chart_y": "건수",
+        "query_index": 0,
         "catalog": "tpcds",
         "schema": "sf1",
     },
@@ -391,6 +397,10 @@ def build_chart(analysis: dict, columns: list[str], rows: list[list]) -> dict | 
             "marker": {"color": colors["bar"]},
         }
 
+    n = len(x_vals)
+    tick_angle = -45 if n > 15 else (-30 if n > 6 else 0)
+    bottom_margin = 140 if n > 15 else (100 if n > 6 else 80)
+
     layout = {
         "title": {"text": analysis["name"], "font": {"color": "#e2e8f0", "size": 16}},
         "paper_bgcolor": "rgba(0,0,0,0)",
@@ -398,14 +408,14 @@ def build_chart(analysis: dict, columns: list[str], rows: list[list]) -> dict | 
         "font": {"color": "#94a3b8", "size": 12},
         "xaxis": {
             "gridcolor": "#1e293b",
-            "tickfont": {"color": "#94a3b8"},
-            "tickangle": -30 if len(x_vals) > 6 else 0,
+            "tickfont": {"color": "#94a3b8", "size": 10},
+            "tickangle": tick_angle,
         },
         "yaxis": {
             "gridcolor": "#1e293b",
             "tickfont": {"color": "#94a3b8"},
         },
-        "margin": {"l": 60, "r": 30, "t": 60, "b": 80},
+        "margin": {"l": 60, "r": 30, "t": 60, "b": bottom_margin},
         "showlegend": False,
     }
 

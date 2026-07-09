@@ -303,6 +303,10 @@ class TrinoLLMAgent:
                 "marker": {"color": "#6366f1"},
             }
 
+        n = len(x_vals)
+        tick_angle = -45 if n > 15 else (-30 if n > 6 else 0)
+        bottom_margin = 140 if n > 15 else (100 if n > 6 else 80)
+
         layout = {
             "title": {"text": analysis["name"], "font": {"color": "#e2e8f0", "size": 14}},
             "paper_bgcolor": "rgba(0,0,0,0)",
@@ -310,10 +314,11 @@ class TrinoLLMAgent:
             "font": {"color": "#94a3b8"},
             "xaxis": {
                 "gridcolor": "#1e293b",
-                "tickangle": -30 if len(x_vals) > 6 else 0,
+                "tickfont": {"size": 10},
+                "tickangle": tick_angle,
             },
             "yaxis": {"gridcolor": "#1e293b"},
-            "margin": {"l": 50, "r": 20, "t": 50, "b": 80},
+            "margin": {"l": 50, "r": 20, "t": 50, "b": bottom_margin},
             "showlegend": False,
         }
         return {"data": [trace], "layout": layout}
