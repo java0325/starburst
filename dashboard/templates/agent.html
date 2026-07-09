@@ -9,6 +9,17 @@
   <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css"/>
   <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/highlight.min.js"></script>
+  <!-- hljs CDN 로딩 실패 시 안전 폴백 (hljs is not defined 방지) -->
+  <script>
+    if (typeof hljs === 'undefined') {
+      window.hljs = {
+        getLanguage: () => false,
+        highlight: (code) => ({ value: code }),
+        highlightAuto: (code) => ({ value: code }),
+        highlightElement: () => {}
+      };
+    }
+  </script>
   <style>
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
@@ -388,6 +399,25 @@
     </div>
   </div>
 
+  <!-- 워크스페이스 선택 -->
+  <div style="padding:8px 10px;border-bottom:1px solid #2f2f2f">
+    <div style="font-size:10px;color:#5a5a5a;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">워크스페이스</div>
+    <div style="display:flex;flex-direction:column;gap:4px" id="agent-ws-selector">
+      <button class="agent-ws-btn agent-ws-active" data-ws="tpcds" onclick="switchAgentWorkspace('tpcds')"
+              style="padding:7px 10px;border-radius:7px;font-size:12px;cursor:pointer;
+                     border:1px solid #334155;background:#1e1b4b;color:#a5b4fc;text-align:left;
+                     font-weight:600;transition:all 0.15s">
+        📊 TPC-DS sf1 스키마 24개 테이블
+      </button>
+      <button class="agent-ws-btn" data-ws="army" onclick="switchAgentWorkspace('army')"
+              style="padding:7px 10px;border-radius:7px;font-size:12px;cursor:pointer;
+                     border:1px solid #374151;background:#111827;color:#6b7280;text-align:left;
+                     transition:all 0.15s">
+        🎖 육군 국방데이터 온톨로지 분석
+      </button>
+    </div>
+  </div>
+
   <button class="new-chat-btn" onclick="newChat()">
     <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
@@ -424,11 +454,31 @@
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
       </svg>
     </button>
-    <select class="model-select" id="model-select" onchange="onModelChange()">
-      <option value="sam860/exaone-4.0:1.2b">EXAONE 4.0 1.2B (추천)</option>
-      <option value="qwen2.5:3b">Qwen 2.5 3B</option>
-      <option value="llama3.2:3b">Llama 3.2 3B</option>
-    </select>
+      <select class="model-select" id="model-select" onchange="onModelChange()">
+        <optgroup label="── Qwen (한국어 우수·안정)">
+          <option value="qwen2.5:3b"   {% if model == 'qwen2.5:3b'   %}selected{% endif %}>Qwen 2.5 3B ★추천</option>
+          <option value="qwen3.5:4b"   {% if model == 'qwen3.5:4b'   %}selected{% endif %}>Qwen 3.5 4B (최신·고품질)</option>
+          <option value="qwen3.5:9b"   {% if model == 'qwen3.5:9b'   %}selected{% endif %}>Qwen 3.5 9B (최고 품질)</option>
+          <option value="qwen2.5:1.5b" {% if model == 'qwen2.5:1.5b' %}selected{% endif %}>Qwen 2.5 1.5B (초경량)</option>
+        </optgroup>
+        <optgroup label="── EEVE Korean (한국어 특화)">
+          <option value="EEVE-Korean-10.8B:latest" {% if model == 'EEVE-Korean-10.8B:latest' %}selected{% endif %}>EEVE Korean 10.8B</option>
+        </optgroup>
+        <optgroup label="── EXAONE (LG AI, Ollama 최신 필요)">
+          <option value="sam860/exaone-4.0:1.2b" {% if model == 'sam860/exaone-4.0:1.2b' %}selected{% endif %}>EXAONE 4.0 1.2B</option>
+        </optgroup>
+        <optgroup label="── Meta Llama">
+          <option value="llama3.1:8b"  {% if model == 'llama3.1:8b'  %}selected{% endif %}>Llama 3.1 8B</option>
+          <option value="llama3.2:3b"  {% if model == 'llama3.2:3b'  %}selected{% endif %}>Llama 3.2 3B</option>
+          <option value="llama3.2:1b"  {% if model == 'llama3.2:1b'  %}selected{% endif %}>Llama 3.2 1B (경량)</option>
+        </optgroup>
+        <optgroup label="── Mistral">
+          <option value="mistral:7b"   {% if model == 'mistral:7b'   %}selected{% endif %}>Mistral 7B</option>
+        </optgroup>
+        <optgroup label="── Google Gemma">
+          <option value="gemma:7b"     {% if model == 'gemma:7b'     %}selected{% endif %}>Gemma 7B</option>
+        </optgroup>
+      </select>
     <div style="margin-left:auto;display:flex;gap:8px">
       <span id="gen-status" style="font-size:12px;color:#6b7280"></span>
     </div>
@@ -436,40 +486,12 @@
 
   <!-- 채팅 스크롤 영역 -->
   <div id="chat-scroll">
-    <!-- 환영 화면 -->
+    <!-- 환영 화면 (내용은 renderWelcomeScreen() 으로 동적 생성) -->
     <div id="welcome">
-      <div class="welcome-icon">🤖</div>
-      <div class="welcome-title">Trino AI 분석 에이전트</div>
-      <div class="welcome-sub">
-        자연어로 질문하면 TPC-DS 데이터를 분석하고<br/>
-        차트와 인사이트로 결과를 보여드립니다.
-      </div>
-      <div class="example-grid">
-        <div class="example-card" onclick="useExample('월별 매출 트렌드를 분석해서 보여줘')">
-          <div class="ex-title">📈 월별 매출 트렌드</div>
-          <div class="ex-sub">시계열로 매출 변화 분석</div>
-        </div>
-        <div class="example-card" onclick="useExample('고객 프로파일을 분석해줘')">
-          <div class="ex-title">👥 고객 프로파일</div>
-          <div class="ex-sub">인구통계 분포 분석</div>
-        </div>
-        <div class="example-card" onclick="useExample('채널별 매출을 비교해줘')">
-          <div class="ex-title">🏪 채널별 매출 비교</div>
-          <div class="ex-sub">매장·카탈로그·웹 채널 비교</div>
-        </div>
-        <div class="example-card" onclick="useExample('어떤 분석을 할 수 있어?')">
-          <div class="ex-title">📋 분석 목록 보기</div>
-          <div class="ex-sub">사용 가능한 모든 분석 확인</div>
-        </div>
-        <div class="example-card" onclick="useExample('store_sales 테이블에서 상위 5개 매장의 총매출을 조회해줘')">
-          <div class="ex-title">🔍 직접 SQL 조회</div>
-          <div class="ex-sub">자연어로 SQL 쿼리 실행</div>
-        </div>
-        <div class="example-card" onclick="useExample('고객 생애 가치(CLV) TOP 10을 분석해줘')">
-          <div class="ex-title">💎 CLV 분석</div>
-          <div class="ex-sub">우량 고객 가치 분석</div>
-        </div>
-      </div>
+      <div class="welcome-icon"></div>
+      <div class="welcome-title"></div>
+      <div class="welcome-sub"></div>
+      <div class="example-grid" id="example-grid"></div>
     </div>
 
     <!-- 메시지는 JS로 #chat-inner에 추가 -->
@@ -508,7 +530,80 @@ const state = {
   conversations: JSON.parse(localStorage.getItem('trino_conversations') || '[]'),
   currentId: null,
   model: '{{ model }}',
+  workspace: 'tpcds',  // 현재 워크스페이스
 };
+
+// ════════════════════════════════════════════════════════
+//  워크스페이스 메타데이터
+// ════════════════════════════════════════════════════════
+const WS_META = {
+  tpcds: {
+    icon: '📊',
+    name: 'TPC-DS sf1 스키마 24개 테이블',
+    sub: '자연어로 질문하면 TPC-DS 데이터를 분석하고<br/>차트와 인사이트로 결과를 보여드립니다.',
+    color: '#1e1b4b', textColor: '#a5b4fc',
+    examples: [
+      { icon: '📈', title: '월별 매출 트렌드',     sub: '시계열로 매출 변화 분석',         query: '월별 매출 트렌드를 분석해서 보여줘' },
+      { icon: '👥', title: '고객 프로파일',         sub: '인구통계 분포 분석',              query: '고객 프로파일을 분석해줘' },
+      { icon: '🏪', title: '채널별 매출 비교',      sub: '매장·카탈로그·웹 채널 비교',      query: '채널별 매출을 비교해줘' },
+      { icon: '📋', title: '전체 테이블 정보',      sub: '24개 테이블 구조·건수 요약',      query: '전체 테이블 정보를 보여줘' },
+      { icon: '💎', title: 'CLV 분석',             sub: '고객 생애 가치 TOP 10',           query: '고객 생애 가치(CLV) TOP 10을 분석해줘' },
+      { icon: '🔍', title: '직접 SQL 조회',         sub: '자연어로 SQL 쿼리 실행',          query: 'store_sales 테이블에서 상위 5개 매장의 총매출을 조회해줘' },
+    ],
+  },
+  army: {
+    icon: '🎖',
+    name: '육군 국방데이터 온톨로지 분석',
+    sub: '육군 국방데이터 온톨로지 구조를 분석합니다.<br/>부대·인원·장비·작전 데이터를 자연어로 조회하세요.',
+    color: '#1a2840', textColor: '#7dd3fc',
+    examples: [
+      { icon: '🗂', title: '국방 온톨로지 개요',    sub: '도메인별 개념 수·관계 유형 구조',  query: '국방 온톨로지 개요를 분석해줘' },
+      { icon: '🏴', title: '부대 편성 분석',        sub: '제대별 부대 편성 현황',            query: '부대 편성을 분석해줘' },
+      { icon: '🚁', title: '장비 현황 분석',        sub: '전차·장갑차·헬기 보유·가동률',     query: '장비 현황을 분석해줘' },
+      { icon: '👮', title: '인원 현황 분석',        sub: '계급별·병과별 인원 분포',          query: '인원 현황을 분석해줘' },
+      { icon: '⚔️', title: '작전개념 분석',        sub: '작전 유형별 임무 개념 현황',        query: '작전개념을 분석해줘' },
+      { icon: '📦', title: '군수 보급 분석',        sub: '보급품 분류별 재고·창고 현황',      query: '군수 보급을 분석해줘' },
+    ],
+  },
+};
+
+// ── 환영 화면 전체 렌더링 ──────────────────────────────────────────────────────
+function renderWelcomeScreen(wsId) {
+  const ws = WS_META[wsId] || WS_META.tpcds;
+
+  const welcomeEl = document.getElementById('welcome');
+  if (!welcomeEl) return;
+
+  welcomeEl.querySelector('.welcome-icon').textContent  = ws.icon;
+  welcomeEl.querySelector('.welcome-title').textContent = `${ws.name} AI 에이전트`;
+  welcomeEl.querySelector('.welcome-sub').innerHTML     = ws.sub;
+
+  document.getElementById('example-grid').innerHTML = ws.examples.map(ex => `
+    <div class="example-card" data-query="${esc(ex.query)}" onclick="useExample(this.dataset.query)">
+      <div class="ex-title">${ex.icon} ${ex.title}</div>
+      <div class="ex-sub">${ex.sub}</div>
+    </div>
+  `).join('');
+}
+
+// ── 워크스페이스 전환 ──────────────────────────────────────────────────────────
+function switchAgentWorkspace(wsId) {
+  if (state.workspace === wsId) return;
+  state.workspace = wsId;
+
+  // 사이드바 버튼 스타일 갱신
+  document.querySelectorAll('.agent-ws-btn').forEach(b => {
+    const isActive = b.dataset.ws === wsId;
+    const meta = WS_META[b.dataset.ws] || WS_META.tpcds;
+    b.style.background  = isActive ? meta.color     : '#111827';
+    b.style.color       = isActive ? meta.textColor : '#6b7280';
+    b.style.borderColor = isActive ? '#6366f1'      : '#374151';
+    b.style.fontWeight  = isActive ? '600'          : 'normal';
+  });
+
+  // 환영 화면(카드 포함) 갱신 — 채팅이 진행 중일 때는 갱신만, 표시 여부는 유지
+  renderWelcomeScreen(wsId);
+}
 
 marked.setOptions({
   breaks: true,
@@ -574,9 +669,10 @@ function saveConversations() {
 
 function newChat() {
   state.currentId = null;
-  document.getElementById('welcome').style.display = 'flex';
+  renderWelcomeScreen(state.workspace);          // 현재 워크스페이스 예시 카드 갱신
+  document.getElementById('welcome').style.display   = 'flex';
   document.getElementById('chat-inner').style.display = 'none';
-  document.getElementById('chat-inner').innerHTML = '';
+  document.getElementById('chat-inner').innerHTML     = '';
   renderConvList();
   document.getElementById('user-input').focus();
 }
@@ -893,9 +989,14 @@ async function sendMessage() {
   const text = input.value.trim();
   if (!text) return;
 
+  // 한국어 IME 잔류 방지: blur → clear → setTimeout으로 compositionend 완료 보장
+  _isComposing = false;
+  input.blur();
   input.value = '';
   autoResize(input);
   updateSendBtn();
+  // 다음 입력을 위해 포커스 복원 (setTimeout으로 IME 완료 후)
+  setTimeout(() => input.focus(), 10);
 
   ensureConv(text);
   const conv = getCurrentConv();
@@ -941,7 +1042,7 @@ async function sendMessage() {
     const resp = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: apiMessages, model }),
+      body: JSON.stringify({ messages: apiMessages, model, workspace: state.workspace }),
       signal: state.abortCtrl.signal,
     });
 
@@ -1097,9 +1198,16 @@ function updateSendBtn() {
   btn.className = `send-btn ${hasText ? 'active' : 'inactive'}`;
 }
 
+// 한국어 IME 조합 상태 추적
+let _isComposing = false;
+document.getElementById('user-input').addEventListener('compositionstart', () => { _isComposing = true; });
+document.getElementById('user-input').addEventListener('compositionend',   () => { _isComposing = false; });
+
 function handleKey(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
+    // IME 조합 중(한글 입력 완성 전)에는 전송하지 않음
+    if (_isComposing) return;
     sendMessage();
   }
 }
@@ -1115,8 +1223,10 @@ function scrollToBottom() {
 }
 
 function useExample(text) {
-  document.getElementById('user-input').value = text;
-  autoResize(document.getElementById('user-input'));
+  const inp = document.getElementById('user-input');
+  inp.blur();          // IME 조합 종료
+  inp.value = text;
+  autoResize(inp);
   updateSendBtn();
   sendMessage();
 }
@@ -1136,6 +1246,7 @@ function esc(str) {
 // ════════════════════════════════════════════════════════
 //  초기화
 // ════════════════════════════════════════════════════════
+renderWelcomeScreen(state.workspace);   // 초기 워크스페이스(tpcds) 예시 카드 렌더링
 renderConvList();
 document.getElementById('user-input').focus();
 </script>

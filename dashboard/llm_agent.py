@@ -35,95 +35,109 @@ _LIST_PATTERNS = [
 ]
 
 # ── Ollama 도구 스펙 정의 ─────────────────────────────────────────────────────
-TOOL_SPECS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "run_analysis",
-            "description": (
-                "사전 정의된 TPC-DS 분석을 실행합니다. "
-                "고객 분석, 매출 트렌드, 채널별 비교, 재고 현황 등 11가지 분석을 지원합니다."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "description": "분석 ID. 00~10 중 하나. 예: '03'",
-                    }
+def _build_tool_specs(analyses: list, default_catalog: str = "tpcds", default_schema: str = "sf1") -> list:
+    """분석 목록 기반으로 도구 스펙을 동적 생성합니다."""
+    id_list  = ", ".join(a["id"] for a in analyses)
+    id_ex    = analyses[0]["id"] if analyses else "00"
+    names    = " / ".join(a["name"] for a in analyses[:4]) + (" 등" if len(analyses) > 4 else "")
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "run_analysis",
+                "description": (
+                    f"사전 정의된 분석을 실행합니다. "
+                    f"지원 분석: {names}. "
+                    f"반드시 아래 ID 목록 중 하나를 사용하세요."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": (
+                                f"분석 ID. 사용 가능한 값: {id_list}. 예: '{id_ex}'"
+                            ),
+                            "enum": [a["id"] for a in analyses],
+                        }
+                    },
+                    "required": ["id"],
                 },
-                "required": ["id"],
             },
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "run_sql",
-            "description": (
-                "직접 SQL 쿼리를 Trino에 실행합니다. "
-                "catalog=tpcds, schema=sf1 에 customer, store_sales, web_sales, "
-                "catalog_sales, item, store, warehouse, date_dim, "
-                "customer_demographics, promotion, inventory 등의 테이블이 있습니다."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "sql": {
-                        "type": "string",
-                        "description": "실행할 SQL 쿼리 (세미콜론 제외)",
+        {
+            "type": "function",
+            "function": {
+                "name": "run_sql",
+                "description": (
+                    "직접 SQL 쿼리를 Trino에 실행합니다. "
+                    f"기본 catalog={default_catalog}, schema={default_schema}."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "sql": {
+                            "type": "string",
+                            "description": "실행할 SQL 쿼리 (세미콜론 제외)",
+                        },
+                        "catalog": {
+                            "type": "string",
+                            "description": f"카탈로그 이름 (기본값: {default_catalog})",
+                        },
+                        "schema": {
+                            "type": "string",
+                            "description": f"스키마 이름 (기본값: {default_schema})",
+                        },
                     },
-                    "catalog": {
-                        "type": "string",
-                        "description": "카탈로그 이름 (기본값: tpcds)",
-                        "default": "tpcds",
-                    },
-                    "schema": {
-                        "type": "string",
-                        "description": "스키마 이름 (기본값: sf1)",
-                        "default": "sf1",
-                    },
+                    "required": ["sql"],
                 },
-                "required": ["sql"],
             },
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_analyses",
-            "description": "사용 가능한 모든 분석 목록과 설명을 반환합니다.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
+        {
+            "type": "function",
+            "function": {
+                "name": "list_analyses",
+                "description": "사용 가능한 모든 분석 목록과 설명을 반환합니다.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
         },
-    },
-]
+    ]
 
-# ── 시스템 프롬프트 ───────────────────────────────────────────────────────────
-SYSTEM_PROMPT_TEMPLATE = """\
-당신은 Trino TPC-DS 데이터 분석 전문가 AI 어시스턴트입니다.
-사용자의 질문에 한국어로 답변하고, 데이터 분석이 필요하면 도구를 사용하여 정확한 결과를 제공하세요.
+# ── 시스템 프롬프트 템플릿 (워크스페이스별) ──────────────────────────────────
+_SYSTEM_BASE = """\
+[CRITICAL] You MUST respond ONLY in Korean (한국어). Never use Chinese, Japanese, or English in your response. 반드시 한국어로만 답변하세요.
+
+당신은 {ws_name} 데이터 분석 전문가 AI 어시스턴트입니다.
+모든 답변은 반드시 한국어로만 작성하세요. 중국어, 영어, 일본어는 절대 사용하지 마세요.
+사용자가 분석을 요청하면 반드시 도구(run_analysis)를 사용하여 정확한 결과를 제공하세요.
 
 ## 분석 가능한 항목
 {analyses_list}
 
-## 주요 TPC-DS 테이블 (catalog=tpcds, schema=sf1)
-- customer: 고객 정보 (인구통계, 주소 등)
-- store_sales / web_sales / catalog_sales: 채널별 판매 데이터
-- store_returns / web_returns / catalog_returns: 채널별 반품 데이터
-- item: 상품 정보 (카테고리, 브랜드, 가격 등)
-- store: 매장 정보 (위치, 직원 수 등)
-- warehouse: 창고 정보
-- date_dim: 날짜 차원 (연도, 월, 분기 등)
-- customer_demographics: 고객 성별, 학력, 결혼 여부
-- promotion: 프로모션/이벤트 정보
-- inventory: 재고 정보
+{domain_context}
 
 ## 규칙
-- 데이터 분석 질문에는 반드시 도구를 사용하세요
-- 분석 결과를 받은 후 핵심 인사이트를 명확하게 설명하세요
+- 사용자가 분석을 요청하면 항상 run_analysis 도구를 사용하세요
+- 분석 결과를 받은 후 핵심 인사이트를 한국어로 명확하게 설명하세요
 - 데이터가 없거나 오류 시 원인을 친절하게 안내하세요
-- 숫자는 읽기 쉽게 단위(원, 개, 명)와 함께 설명하세요
+- 숫자는 읽기 쉽게 단위와 함께 설명하세요
 """
+
+_DOMAIN_TPCDS = """\
+## 주요 데이터베이스 테이블 (catalog=tpcds, schema=sf1)
+- customer: 고객 정보 (인구통계, 주소 등)
+- store_sales / web_sales / catalog_sales: 채널별 판매 데이터
+- item: 상품 정보 (카테고리, 브랜드, 가격 등)
+- store: 매장 정보 / date_dim: 날짜 차원
+- inventory: 재고 / promotion: 프로모션 정보"""
+
+_DOMAIN_ARMY = """\
+## 주요 데이터 도메인 (육군 국방데이터 온톨로지)
+- 부대편성: 군단·사단·여단·대대 계층 구조, 지휘 관계
+- 인원관리: 장교·부사관·병, 계급·병과·보직 데이터
+- 장비체계: 전차·장갑차·헬기·포 등 무기체계 및 가동 현황
+- 작전수행: 작전 유형(공격·방어·특수)별 임무 개념, C4I 연계
+- 군수지원: 보급품 분류·재고율, 창고 현황"""
 
 
 class TrinoLLMAgent:
@@ -136,20 +150,35 @@ class TrinoLLMAgent:
         trino_url: str,
         analyses: list,
         sql_dir: str = SQL_DIR,
+        workspace_name: str = "TPC-DS sf1 스키마 24개 테이블",
     ) -> None:
         self.ollama_url = ollama_url.rstrip("/")
         self.model = model
         self.trino_url = trino_url.rstrip("/")
         self.analyses = analyses
         self.sql_dir = sql_dir
+        self.workspace_name = workspace_name
         self.system_prompt = self._build_system_prompt()
+        # 분석 목록 기반 동적 tool specs (ID 목록을 enum으로 포함)
+        default_catalog = analyses[0].get("catalog", "tpcds") if analyses else "tpcds"
+        default_schema  = analyses[0].get("schema",  "sf1")   if analyses else "sf1"
+        self.tool_specs = _build_tool_specs(analyses, default_catalog, default_schema)
 
     # ── 시스템 프롬프트 생성 ──────────────────────────────────────────────────
     def _build_system_prompt(self) -> str:
         lines = "\n".join(
             f"  {a['id']}: {a['name']} — {a['description']}" for a in self.analyses
         )
-        return SYSTEM_PROMPT_TEMPLATE.format(analyses_list=lines)
+        # 워크스페이스 종류에 따라 도메인 컨텍스트 선택
+        if "육군" in self.workspace_name or "army" in self.workspace_name.lower():
+            domain_ctx = _DOMAIN_ARMY
+        else:
+            domain_ctx = _DOMAIN_TPCDS
+        return _SYSTEM_BASE.format(
+            ws_name=self.workspace_name,
+            analyses_list=lines,
+            domain_context=domain_ctx,
+        )
 
     # ── 인텐트 분류 ──────────────────────────────────────────────────────────
     @staticmethod
@@ -226,8 +255,9 @@ class TrinoLLMAgent:
 
     # ── SQL 파일 로드 ─────────────────────────────────────────────────────────
     def _load_sql(self, analysis_id: str, query_index: int = 0) -> str | None:
-        padded = analysis_id.zfill(2)
-        pattern = re.compile(rf"^{padded}_.*\.sql$")
+        # 알파벳+숫자 부분만 추출 (A00, 03 모두 지원)
+        aid = re.sub(r"[^A-Za-z0-9]", "", analysis_id)
+        pattern = re.compile(rf"^{re.escape(aid)}_.*\.sql$", re.IGNORECASE)
         try:
             files = [f for f in os.listdir(self.sql_dir) if pattern.match(f)]
         except OSError:
@@ -335,8 +365,23 @@ class TrinoLLMAgent:
             }
 
         if name == "run_analysis":
-            aid = str(args.get("id", "")).zfill(2)
+            raw_id = str(args.get("id", "")).strip()
+            aid = raw_id.zfill(2) if raw_id.isdigit() else raw_id
+            # 1차: 정확한 ID 매칭
             analysis = next((a for a in self.analyses if a["id"] == aid), None)
+            # 2차: 숫자 부분만 매칭 (예: LLM이 "A01" 대신 "01"을 반환한 경우)
+            if analysis is None:
+                num_part = re.sub(r"[^0-9]", "", aid)
+                if num_part:
+                    analysis = next(
+                        (a for a in self.analyses if re.sub(r"[^0-9]", "", a["id"]) == num_part),
+                        None,
+                    )
+            # 3차: 키워드 매칭 폴백 (args에 이름 힌트가 있을 경우)
+            if analysis is None:
+                hint = args.get("name", "") or args.get("query", "")
+                if hint:
+                    analysis = self._match_analysis(hint)
             if not analysis:
                 return {"tool": "run_analysis", "error": f"분석 ID '{aid}'를 찾을 수 없습니다."}
             sql = self._load_sql(aid, analysis.get("query_index", 0))
@@ -393,8 +438,50 @@ class TrinoLLMAgent:
             lines.append(f"... (총 {len(rows)}행 중 15행 표시)")
         return "\n".join(lines)
 
+    # ── 키워드 기반 분석 매처 (tool calling 폴백용) ──────────────────────────
+    def _match_analysis(self, user_input: str) -> dict | None:
+        """키워드 점수가 가장 높은 분석을 반환합니다. 매칭 없으면 None."""
+        text = user_input.lower()
+        scored = []
+        for analysis in self.analyses:
+            score = sum(1 for kw in analysis.get("keywords", []) if kw in text)
+            scored.append((score, analysis))
+        if not scored:
+            return None
+        scored.sort(key=lambda x: -x[0])
+        best_score, best = scored[0]
+        return best if best_score > 0 else None
+
+    # ── Ollama 에러 분류 ─────────────────────────────────────────────────────
+    @staticmethod
+    def _ollama_error_message(status_code: int, body: str) -> str:
+        """Ollama HTTP 오류를 사용자 친화적 한국어 메시지로 변환합니다."""
+        low = body.lower()
+        if "not supported by your version" in low or "you may need to upgrade" in low:
+            return (
+                "⚠️ 현재 Ollama 버전이 이 모델을 지원하지 않습니다.\n\n"
+                "**해결 방법 (택1)**\n"
+                "1. **Ollama 업그레이드** — 터미널에서 실행:\n"
+                "   ```\n"
+                "   brew upgrade ollama\n"
+                "   ```\n"
+                "   또는  `./setup-llm.sh` 재실행\n\n"
+                "2. **호환 모델로 전환** — 화면 왼쪽 상단 모델 선택기에서\n"
+                "   **Qwen 2.5 1.5B** 또는 **Llama 3.2 3B** 를 선택하세요.\n\n"
+                "3. 모델 전환 후 `./setup-llm.sh` 를 다시 실행하여 모델을 다운로드하세요."
+            )
+        if "model" in low and ("not found" in low or "pull" in low):
+            return (
+                "⚠️ 모델을 찾을 수 없습니다.\n\n"
+                "`./setup-llm.sh` 를 실행하여 모델을 다운로드하세요."
+            )
+        if status_code == 500:
+            return f"⚠️ Ollama 내부 오류 (500): {body[:200]}"
+        return f"⚠️ Ollama 오류 {status_code}: {body[:200]}"
+
     # ── Ollama 스트리밍 헬퍼 ─────────────────────────────────────────────────
     def _stream_ollama(self, messages: list) -> Generator[str, None, None]:
+        """도구 없이 단순 스트리밍 응답을 생성합니다."""
         try:
             resp = requests.post(
                 f"{self.ollama_url}/api/chat",
@@ -402,17 +489,37 @@ class TrinoLLMAgent:
                 stream=True,
                 timeout=180,
             )
+            # 스트리밍 오류 응답 감지 (400/500 등)
+            if not resp.ok:
+                try:
+                    err_body = resp.json().get("error", resp.text[:300])
+                except Exception:
+                    err_body = resp.text[:300]
+                yield self._ollama_error_message(resp.status_code, err_body)
+                return
+
             for line in resp.iter_lines():
                 if not line:
                     continue
-                data = json.loads(line)
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
                 if data.get("done"):
                     break
+                # 스트리밍 도중 runner 오류 감지
+                if data.get("error"):
+                    yield self._ollama_error_message(500, data["error"])
+                    return
                 token = data.get("message", {}).get("content", "")
                 if token:
                     yield token
+        except requests.exceptions.ConnectionError:
+            yield "⚠️ Ollama 서버에 연결할 수 없습니다. `ollama serve` 가 실행 중인지 확인하세요."
+        except requests.exceptions.Timeout:
+            yield "⚠️ Ollama 응답 시간 초과. 모델 로딩 중일 수 있습니다. 잠시 후 다시 시도하세요."
         except Exception as exc:
-            yield f"\n[스트리밍 오류: {exc}]"
+            yield f"⚠️ 스트리밍 오류: {exc}"
 
     # ── 메인 스트리밍 채팅 ────────────────────────────────────────────────────
     def stream_chat(self, messages: list) -> Generator[dict, None, None]:
@@ -477,29 +584,120 @@ class TrinoLLMAgent:
             return
 
         # ── Phase 1: 도구 호출 판단 (비스트리밍) ──────────────────────────────
+        # 일부 경량 모델은 tool calling을 지원하지 않으므로 400 발생 시 키워드 폴백
+        result_msg: dict = {}
+        tool_calls: list = []
+        _use_fallback = False
+
         try:
             r = requests.post(
                 f"{self.ollama_url}/api/chat",
                 json={
                     "model": self.model,
                     "messages": full_messages,
-                    "tools": TOOL_SPECS,
+                    "tools": self.tool_specs,
                     "stream": False,
                     "options": {"temperature": 0.1},
                 },
                 timeout=180,
             )
-            r.raise_for_status()
-            result_msg = r.json().get("message", {})
+            if r.status_code == 400:
+                # 모델이 tool calling 미지원 → 키워드 폴백
+                _use_fallback = True
+            elif r.status_code == 500:
+                # 모델 미지원 버전 등 런타임 오류 → 폴백 시도 후 에러 안내
+                try:
+                    err_body = r.json().get("error", r.text[:300])
+                except Exception:
+                    err_body = r.text[:300]
+                low = err_body.lower()
+                if "not supported by your version" in low or "you may need to upgrade" in low:
+                    # 버전 문제: 도구 없이 폴백 시도
+                    _use_fallback = True
+                else:
+                    yield {"type": "error", "message": self._ollama_error_message(500, err_body)}
+                    return
+            else:
+                r.raise_for_status()
+                result_msg = r.json().get("message", {})
+                tool_calls = result_msg.get("tool_calls") or []
+
+        except requests.exceptions.ConnectionError:
+            yield {"type": "error", "message": "Ollama 서버에 연결할 수 없습니다. `ollama serve` 가 실행 중인지 확인하세요."}
+            return
+        except requests.exceptions.Timeout:
+            yield {"type": "error", "message": "Ollama 응답 시간 초과. 모델이 로딩 중일 수 있습니다. 잠시 후 다시 시도해주세요."}
+            return
+        except requests.HTTPError as exc:
+            yield {"type": "error", "message": f"LLM 응답 실패: {exc}"}
+            return
         except Exception as exc:
             yield {"type": "error", "message": f"LLM 응답 실패: {exc}"}
             return
 
-        tool_calls = result_msg.get("tool_calls") or []
-        pre_text = (result_msg.get("content") or "").strip()
+        # ── Phase 1b: tool calling 미지원 모델 폴백 (키워드 매칭) ────────────
+        if _use_fallback:
+            analysis = self._match_analysis(last_user)
+            if analysis:
+                aid = analysis["id"]
+                yield {"type": "tool_start", "name": "run_analysis", "args": {"id": aid}}
+                result = self._execute_tool("run_analysis", {"id": aid})
+                yield {"type": "tool_result", "result": result}
 
-        # 도구 호출 이전 텍스트 출력
+                summary_text = self._summarise_for_llm(result)
+                insight_messages = [
+                    *full_messages,
+                    {
+                        "role": "assistant",
+                        "content": f"[{analysis['name']}] 분석 데이터를 조회했습니다.",
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"다음 분석 결과에 대해 핵심 인사이트를 한국어로 자연스럽게 설명해주세요:\n"
+                            f"{summary_text}"
+                        ),
+                    },
+                ]
+                for token in self._stream_ollama(insight_messages):
+                    yield {"type": "token", "content": token}
+            else:
+                # 매칭 분석 없음 → 일반 대화
+                for token in self._stream_ollama(full_messages):
+                    yield {"type": "token", "content": token}
+            yield {"type": "done"}
+            return
+
+        # ── Phase 1c: tool_calls 없이 텍스트만 반환된 경우 ──────────────────────
+        pre_text = (result_msg.get("content") or "").strip()
         if pre_text and not tool_calls:
+            # 키워드 매칭으로 분석이 찾아지면 직접 실행 (LLM이 도구 호출 대신 텍스트 반환한 경우)
+            matched = self._match_analysis(last_user)
+            if matched:
+                aid = matched["id"]
+                yield {"type": "tool_start", "name": "run_analysis", "args": {"id": aid}}
+                result = self._execute_tool("run_analysis", {"id": aid})
+                yield {"type": "tool_result", "result": result}
+                summary_text = self._summarise_for_llm(result)
+                insight_messages = [
+                    *full_messages,
+                    {
+                        "role": "assistant",
+                        "content": f"[{matched['name']}] 분석 데이터를 조회했습니다.",
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"다음 분석 결과에 대해 핵심 인사이트를 한국어로 자연스럽게 설명해주세요:\n"
+                            f"{summary_text}"
+                        ),
+                    },
+                ]
+                for token in self._stream_ollama(insight_messages):
+                    yield {"type": "token", "content": token}
+                yield {"type": "done"}
+                return
+            # 매칭 분석 없음 → 그냥 LLM 텍스트 응답 출력
             for char in pre_text:
                 yield {"type": "token", "content": char}
             yield {"type": "done"}
@@ -528,9 +726,33 @@ class TrinoLLMAgent:
             })
 
         if not tool_results:
-            # 도구 없고 텍스트도 없는 경우: 일반 스트리밍
-            for token in self._stream_ollama(full_messages):
-                yield {"type": "token", "content": token}
+            # 도구 없고 텍스트도 없는 경우: 키워드 매칭 우선 시도 후 일반 스트리밍
+            matched_fallback = self._match_analysis(last_user)
+            if matched_fallback:
+                aid = matched_fallback["id"]
+                yield {"type": "tool_start", "name": "run_analysis", "args": {"id": aid}}
+                fallback_result = self._execute_tool("run_analysis", {"id": aid})
+                yield {"type": "tool_result", "result": fallback_result}
+                fb_summary = self._summarise_for_llm(fallback_result)
+                fb_insight = [
+                    *full_messages,
+                    {
+                        "role": "assistant",
+                        "content": f"[{matched_fallback['name']}] 분석 데이터를 조회했습니다.",
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"다음 분석 결과에 대해 핵심 인사이트를 한국어로 설명해주세요:\n"
+                            f"{fb_summary}"
+                        ),
+                    },
+                ]
+                for token in self._stream_ollama(fb_insight):
+                    yield {"type": "token", "content": token}
+            else:
+                for token in self._stream_ollama(full_messages):
+                    yield {"type": "token", "content": token}
             yield {"type": "done"}
             return
 

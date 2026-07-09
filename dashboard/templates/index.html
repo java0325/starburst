@@ -38,6 +38,15 @@
     }
     .ct-btn:hover { background: #1e293b; color: #e2e8f0; border-color: #475569; }
     .ct-btn.ct-active { background: #312e81; border-color: #6366f1; color: #a5b4fc; font-weight: 600; }
+    /* ── 워크스페이스 선택 버튼 ── */
+    .ws-btn {
+      flex: 1; padding: 7px 6px; border-radius: 7px; font-size: 11px; cursor: pointer;
+      border: 1px solid #334155; background: #0f172a; color: #64748b;
+      transition: all 0.15s; text-align: center; white-space: nowrap; overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ws-btn:hover { background: #1e293b; color: #e2e8f0; }
+    .ws-btn.ws-active { background: #1e1b4b; border-color: #6366f1; color: #a5b4fc; font-weight: 600; }
   </style>
 </head>
 <body class="h-screen flex overflow-hidden">
@@ -49,8 +58,8 @@
       <div class="flex items-center gap-2">
         <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">T</div>
         <div>
-          <p class="font-semibold text-white text-sm">Trino TPC-DS</p>
-          <p class="text-xs text-slate-400">자연어 분석 대시보드</p>
+          <p class="font-semibold text-white text-sm">Trino 분석 대시보드</p>
+          <p class="text-xs text-slate-400" id="ws-subtitle">워크스페이스 선택</p>
         </div>
       </div>
       <!-- 서버 상태 -->
@@ -60,26 +69,35 @@
       </div>
     </div>
 
-    <!-- 분석 목록 -->
-    <div class="flex-1 overflow-y-auto p-2">
+    <!-- 워크스페이스 선택 -->
+    <div class="p-2 border-b border-slate-700">
+      <p class="text-xs text-slate-500 px-1 pb-1 uppercase tracking-wider">워크스페이스</p>
+      <div class="flex gap-1" id="ws-selector">
+        {% for wid, ws in workspaces.items() %}
+        <button
+          class="ws-btn{% if wid == default_workspace %} ws-active{% endif %}"
+          data-ws="{{ wid }}"
+          onclick="switchWorkspace('{{ wid }}')">
+          {{ ws.icon }} {{ ws.name|truncate(16, True, '') }}
+        </button>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- 분석 목록 (동적 렌더링) -->
+    <div class="flex-1 overflow-y-auto p-2" id="analysis-list-container">
       <p class="text-xs text-slate-500 px-2 py-2 uppercase tracking-wider">분석 목록</p>
-      {% for a in analyses %}
-      <button
-        class="analysis-btn w-full text-left px-3 py-2.5 rounded-lg mb-1"
-        onclick="runById('{{ a.id }}', '{{ a.name }}')"
-        data-id="{{ a.id }}">
-        <div class="flex items-center gap-2">
-          <span class="text-xs font-mono text-slate-500 w-5">{{ a.id }}</span>
-          <span class="text-sm text-slate-200 leading-tight">{{ a.name }}</span>
-        </div>
-        <p class="text-xs text-slate-500 mt-0.5 ml-7 leading-tight">{{ a.description[:40] }}...</p>
-      </button>
-      {% endfor %}
+      <div id="analysis-list">
+        <!-- JS로 채워짐 -->
+      </div>
     </div>
 
     <!-- 사용 팁 -->
     <div class="p-4 border-t border-slate-700">
       <p class="text-xs text-slate-500">💡 자연어로 질문하거나 목록을 클릭하세요</p>
+      <a href="/agent" class="block mt-2 text-xs text-indigo-400 hover:text-indigo-300">
+        🤖 AI 에이전트로 이동 →
+      </a>
     </div>
   </aside>
 
@@ -88,7 +106,10 @@
 
     <!-- 헤더 -->
     <div class="flex-shrink-0 p-4 border-b border-slate-800 flex items-center justify-between">
-      <h1 class="text-white font-semibold">분석 채팅</h1>
+      <div>
+        <h1 class="text-white font-semibold" id="main-title">분석 채팅</h1>
+        <p class="text-xs text-slate-500 mt-0.5" id="main-subtitle"></p>
+      </div>
       <button onclick="clearChat()" class="text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 transition">
         대화 초기화
       </button>
@@ -96,37 +117,18 @@
 
     <!-- 채팅 영역 -->
     <div id="chat" class="flex-1 overflow-y-auto p-6 space-y-6">
-      <!-- 환영 메시지 -->
-      <div class="max-w-2xl mx-auto text-center py-12">
-        <div class="w-16 h-16 bg-indigo-600 rounded-2xl mx-auto mb-4 flex items-center justify-center text-3xl">📊</div>
-        <h2 class="text-xl font-semibold text-white mb-2">TPC-DS 자연어 분석</h2>
-        <p class="text-slate-400 text-sm leading-relaxed">
-          아래 입력창에 자연어로 분석을 요청하거나,<br/>왼쪽 목록에서 분석을 선택하세요.
+      <!-- 환영 메시지 (동적) -->
+      <div id="welcome-msg" class="max-w-2xl mx-auto text-center py-12">
+        <div class="w-16 h-16 bg-indigo-600 rounded-2xl mx-auto mb-4 flex items-center justify-center text-3xl" id="welcome-icon">📊</div>
+        <h2 class="text-xl font-semibold text-white mb-2" id="welcome-title">워크스페이스를 선택하세요</h2>
+        <p class="text-slate-400 text-sm leading-relaxed" id="welcome-desc">
+          왼쪽에서 분석 워크스페이스를 선택하거나<br/>자연어로 분석을 요청하세요.
         </p>
-        <div class="mt-6 flex flex-wrap gap-2 justify-center">
-          <span onclick="sendExample('월별 매출 트렌드를 분석해서 보여줘')"
-                class="cursor-pointer text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-full transition">
-            월별 매출 트렌드를 분석해서 보여줘
-          </span>
-          <span onclick="sendExample('채널별 매출 비교 분석')"
-                class="cursor-pointer text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-full transition">
-            채널별 매출 비교 분석
-          </span>
-          <span onclick="sendExample('고객 CLV 분석')"
-                class="cursor-pointer text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-full transition">
-            고객 CLV 분석
-          </span>
-          <span onclick="sendExample('재고 현황 분석')"
-                class="cursor-pointer text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-full transition">
-            재고 현황 분석
-          </span>
-          <span onclick="sendExample('프로모션 효과 분석')"
-                class="cursor-pointer text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-full transition">
-            프로모션 효과 분석
-          </span>
+        <div class="mt-6 flex flex-wrap gap-2 justify-center" id="welcome-examples">
+          <!-- 동적으로 채워짐 -->
         </div>
-      </div>
-    </div>
+      </div><!-- /welcome-msg -->
+    </div><!-- /chat -->
 
     <!-- 입력창 -->
     <div class="flex-shrink-0 p-4 border-t border-slate-800">
@@ -152,6 +154,68 @@
   </main>
 
   <script>
+  // ── 워크스페이스 데이터 (서버에서 주입) ────────────────────────────────────
+  const WORKSPACES_DATA = {{ workspaces | tojson }};
+  let currentWorkspace = '{{ default_workspace }}';
+
+  const WS_EXAMPLES = {
+    tpcds: [
+      '월별 매출 트렌드를 분석해서 보여줘',
+      '채널별 매출 비교 분석',
+      '고객 CLV 분석',
+      '재고 현황 분석',
+    ],
+    army: [
+      '부대 편성 현황을 분석해줘',
+      '장비 보유 현황 보여줘',
+      '인원 계급별 분포 분석',
+      '군수 보급 현황 분석',
+    ],
+  };
+
+  function switchWorkspace(wsId) {
+    const ws = WORKSPACES_DATA[wsId];
+    if (!ws) return;
+
+    // currentWorkspace를 먼저 업데이트해야 clearChat()이 올바른 내용을 생성함
+    currentWorkspace = wsId;
+
+    // 워크스페이스 버튼 active 상태 갱신
+    document.querySelectorAll('.ws-btn').forEach(b =>
+      b.classList.toggle('ws-active', b.dataset.ws === wsId));
+
+    // 사이드바 부제목
+    document.getElementById('ws-subtitle').textContent = ws.name;
+
+    // 분석 목록 렌더링 (사이드바)
+    renderAnalysisList(ws.analyses);
+
+    // 헤더 갱신
+    document.getElementById('main-title').textContent = `${ws.icon} ${ws.name}`;
+    document.getElementById('main-subtitle').textContent = ws.description;
+
+    // 채팅 영역 초기화 — clearChat()이 currentWorkspace 기준으로 환영 메시지 재생성
+    clearChat();
+  }
+
+  function renderAnalysisList(analyses) {
+    const container = document.getElementById('analysis-list');
+    container.innerHTML = analyses.map(a => `
+      <button
+        class="analysis-btn w-full text-left px-3 py-2.5 rounded-lg mb-1"
+        onclick="runById('${escHtml(a.id)}', '${escHtml(a.name)}')"
+        data-id="${escHtml(a.id)}">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-mono text-slate-500 w-7 flex-shrink-0">${escHtml(a.id)}</span>
+          <span class="text-sm text-slate-200 leading-tight">${escHtml(a.name)}</span>
+        </div>
+        <p class="text-xs text-slate-500 mt-0.5 ml-9 leading-tight">
+          ${escHtml(a.description.length > 38 ? a.description.slice(0, 38) + '…' : a.description)}
+        </p>
+      </button>
+    `).join('');
+  }
+
   // ── 서버 상태 확인 ──────────────────────────────────────────────────────────
   async function checkHealth() {
     try {
@@ -464,7 +528,7 @@
       const resp = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: text }),
+        body: JSON.stringify({ query: text, workspace: currentWorkspace }),
       });
       const data = await resp.json();
       if (data.type === 'message') {
@@ -484,6 +548,10 @@
   }
 
   async function runById(id, name) {
+    // 환영 메시지 숨기기 (clearChat 없이 인라인 제거)
+    const welcome = document.getElementById('welcome-msg');
+    if (welcome) welcome.remove();
+
     // 사이드바 active 표시
     document.querySelectorAll('.analysis-btn').forEach(b => b.classList.remove('active'));
     document.querySelector(`[data-id="${id}"]`)?.classList.add('active');
@@ -496,7 +564,7 @@
       const resp = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({ id, workspace: currentWorkspace }),
       });
       const data = await resp.json();
       if (!resp.ok) {
@@ -537,7 +605,26 @@
 
   function clearChat() {
     const chat = document.getElementById('chat');
+    // 채팅 메시지만 지우고 환영 메시지를 다시 표시
     chat.innerHTML = '';
+    const ws = WORKSPACES_DATA[currentWorkspace] || {};
+    const icon = ws.icon || '📊';
+    const name = ws.name || '분석 대시보드';
+    const desc = ws.description || '';
+    const examples = WS_EXAMPLES[currentWorkspace] || [];
+    const exHtml = examples.map(ex =>
+      `<span onclick="sendExample('${ex.replace(/'/g, "\\'")}')"
+             class="cursor-pointer text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-full transition">
+        ${escHtml(ex)}
+      </span>`
+    ).join('');
+    chat.innerHTML = `
+      <div id="welcome-msg" class="max-w-2xl mx-auto text-center py-12">
+        <div class="w-16 h-16 bg-indigo-600 rounded-2xl mx-auto mb-4 flex items-center justify-center text-3xl">${escHtml(icon)}</div>
+        <h2 class="text-xl font-semibold text-white mb-2">${escHtml(name)}</h2>
+        <p class="text-slate-400 text-sm leading-relaxed">${escHtml(desc)}<br/>아래 입력창에 자연어로 요청하거나 왼쪽 목록을 클릭하세요.</p>
+        <div class="mt-6 flex flex-wrap gap-2 justify-center">${exHtml}</div>
+      </div>`;
     document.querySelectorAll('.analysis-btn').forEach(b => b.classList.remove('active'));
   }
 
@@ -548,6 +635,12 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
   }
+
+  // ── 페이지 초기화 ────────────────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', () => {
+    // 기본 워크스페이스 초기화
+    switchWorkspace(currentWorkspace);
+  });
   </script>
 </body>
 </html>

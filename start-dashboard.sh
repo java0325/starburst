@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DASHBOARD_DIR="${SCRIPT_DIR}/dashboard"
 TRINO_URL="${TRINO_URL:-http://localhost:8080}"
 OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
-LLM_MODEL="${LLM_MODEL:-sam860/exaone-4.0:1.2b}"
+LLM_MODEL="${LLM_MODEL:-qwen2.5:3b}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-5050}"
 
 echo "======================================================"

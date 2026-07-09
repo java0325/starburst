@@ -1,5 +1,6 @@
 """
-Trino TPC-DS 자연어 분석 대시보드 + LLM 에이전트
+Trino 자연어 분석 대시보드 + LLM 에이전트
+워크스페이스: TPC-DS sf1 / 육군 국방데이터 온톨로지
 """
 import json
 import os
@@ -13,8 +14,10 @@ app = Flask(__name__)
 
 TRINO_URL = os.environ.get("TRINO_URL", "http://localhost:8080")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-LLM_MODEL = os.environ.get("LLM_MODEL", "sam860/exaone-4.0:1.2b")
-SQL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sql")
+LLM_MODEL = os.environ.get("LLM_MODEL", "qwen2.5:3b")
+_BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
+SQL_DIR       = os.path.join(_BASE_DIR, "..", "sql")
+ARMY_SQL_DIR  = os.path.join(_BASE_DIR, "..", "sql", "army")
 
 # ── 분석 목록 정의 ─────────────────────────────────────────────────────────────
 # keywords: 자연어 입력과 매칭할 한국어 키워드 목록
@@ -162,6 +165,102 @@ ANALYSES = [
     },
 ]
 
+# ── 육군 국방데이터 온톨로지 분석 목록 ────────────────────────────────────────
+ANALYSES_ARMY = [
+    {
+        "id": "A00",
+        "name": "국방 온톨로지 개요",
+        "keywords": ["온톨로지", "개요", "전체 구조", "개념 체계", "도메인"],
+        "description": "육군 국방데이터 온톨로지 도메인별 개념 수·관계 유형 전체 구조를 분석합니다.",
+        "chart_type": "bar",
+        "chart_x": "도메인",
+        "chart_y": "개념수",
+        "query_index": 0,
+        "catalog": "tpch",
+        "schema": "tiny",
+    },
+    {
+        "id": "A01",
+        "name": "부대 편성 분석",
+        "keywords": ["부대", "편성", "제대", "지휘", "군단", "사단", "여단", "대대"],
+        "description": "제대별·기능별 부대 편성 구조와 전투·지원 부대 현황을 분석합니다.",
+        "chart_type": "bar",
+        "chart_x": "제대",
+        "chart_y": "부대수",
+        "query_index": 0,
+        "catalog": "tpch",
+        "schema": "tiny",
+    },
+    {
+        "id": "A02",
+        "name": "장비 현황 분석",
+        "keywords": ["장비", "전차", "장갑차", "포", "헬기", "가동률", "노후"],
+        "description": "장비 유형별 보유수량·가동률과 노후도별 분류 현황을 분석합니다.",
+        "chart_type": "bar",
+        "chart_x": "장비유형",
+        "chart_y": "보유수량",
+        "query_index": 0,
+        "catalog": "tpch",
+        "schema": "tiny",
+    },
+    {
+        "id": "A03",
+        "name": "인원 현황 분석",
+        "keywords": ["인원", "계급", "병과", "장교", "부사관", "병"],
+        "description": "계급별·병과별 인원 현황과 분포를 분석합니다.",
+        "chart_type": "bar",
+        "chart_x": "계급",
+        "chart_y": "인원수",
+        "query_index": 0,
+        "catalog": "tpch",
+        "schema": "tiny",
+    },
+    {
+        "id": "A04",
+        "name": "작전개념 분석",
+        "keywords": ["작전", "임무", "전투", "방어", "C4I", "지휘통제"],
+        "description": "작전 유형별 임무 개념 수와 C4I 체계 연계 현황을 분석합니다.",
+        "chart_type": "bar",
+        "chart_x": "작전유형",
+        "chart_y": "임무개념수",
+        "query_index": 0,
+        "catalog": "tpch",
+        "schema": "tiny",
+    },
+    {
+        "id": "A05",
+        "name": "군수 보급 분석",
+        "keywords": ["군수", "보급", "창고", "탄약", "재고", "유류"],
+        "description": "보급품 분류별 품목 수·재고율과 군수지원 창고별 현황을 분석합니다.",
+        "chart_type": "bar",
+        "chart_x": "분류",
+        "chart_y": "품목수",
+        "query_index": 0,
+        "catalog": "tpch",
+        "schema": "tiny",
+    },
+]
+
+# ── 워크스페이스 정의 ─────────────────────────────────────────────────────────
+WORKSPACES = {
+    "tpcds": {
+        "id":          "tpcds",
+        "name":        "TPC-DS sf1 스키마 24개 테이블",
+        "icon":        "📊",
+        "description": "TPC-DS 표준 데이터웨어하우스 벤치마크 데이터 분석",
+        "sql_dir":     SQL_DIR,
+        "analyses":    ANALYSES,
+    },
+    "army": {
+        "id":          "army",
+        "name":        "육군 국방데이터 온톨로지 분석",
+        "icon":        "🎖",
+        "description": "육군 국방데이터의 온톨로지 기반 구조·인원·장비·작전 분석",
+        "sql_dir":     ARMY_SQL_DIR,
+        "analyses":    ANALYSES_ARMY,
+    },
+}
+
 
 # ── 인텐트 분류 키워드 ────────────────────────────────────────────────────────
 _GREETING_KW = [
@@ -200,18 +299,22 @@ def _is_list_query(text: str) -> bool:
     return any(kw in t for kw in _LIST_KW)
 
 
-def find_analysis(user_input: str) -> dict | None:
+def find_analysis(user_input: str, analyses: list | None = None) -> dict | None:
     """
     사용자 자연어 입력에서 가장 적합한 분석을 찾습니다.
     각 분석의 키워드와 매칭 점수를 계산하고 최고점 반환.
     """
+    if analyses is None:
+        analyses = ANALYSES
     text = user_input.lower()
     scored = []
 
-    for analysis in ANALYSES:
+    for analysis in analyses:
         score = sum(1 for kw in analysis["keywords"] if kw in text)
         scored.append((score, analysis))
 
+    if not scored:
+        return None
     scored.sort(key=lambda x: -x[0])
     best_score, best = scored[0]
     return best if best_score > 0 else None
@@ -254,18 +357,21 @@ def extract_query(sql_content: str, index: int = 0) -> str | None:
     return queries[index] if index < len(queries) else queries[0]
 
 
-def load_sql_query(analysis_id: str, query_index: int = 0) -> str | None:
+def load_sql_query(analysis_id: str, query_index: int = 0, sql_dir: str | None = None) -> str | None:
     """SQL 파일을 읽어 지정된 쿼리를 반환합니다."""
-    padded = analysis_id.zfill(2)
-    pattern = re.compile(rf"^{padded}_.*\.sql$")
+    if sql_dir is None:
+        sql_dir = SQL_DIR
+    # 분석 ID의 알파벳+숫자 부분만 패턴 매칭 (A00, 00 등 모두 지원)
+    aid = re.sub(r"[^A-Za-z0-9]", "", analysis_id)
+    pattern = re.compile(rf"^{re.escape(aid)}_.*\.sql$", re.IGNORECASE)
     try:
-        files = [f for f in os.listdir(SQL_DIR) if pattern.match(f)]
+        files = [f for f in os.listdir(sql_dir) if pattern.match(f)]
     except OSError:
         return None
     if not files:
         return None
 
-    path = os.path.join(SQL_DIR, sorted(files)[0])
+    path = os.path.join(sql_dir, sorted(files)[0])
     with open(path, encoding="utf-8") as f:
         content = f.read()
     return extract_query(content, query_index)
@@ -426,14 +532,43 @@ def build_chart(analysis: dict, columns: list[str], rows: list[list]) -> dict | 
 
 @app.route("/")
 def index():
-    return render_template("index.html", analyses=ANALYSES)
+    # 워크스페이스 메타데이터를 JSON으로 전달 (analyses 제외한 기본 정보만)
+    ws_meta = {
+        wid: {
+            "id": ws["id"], "name": ws["name"],
+            "icon": ws["icon"], "description": ws["description"],
+            "analyses": [
+                {"id": a["id"], "name": a["name"], "description": a["description"]}
+                for a in ws["analyses"]
+            ],
+        }
+        for wid, ws in WORKSPACES.items()
+    }
+    return render_template(
+        "index.html",
+        workspaces=ws_meta,
+        default_workspace="tpcds",
+    )
+
+
+@app.route("/api/workspaces")
+def get_workspaces():
+    return jsonify({
+        wid: {
+            "id": ws["id"], "name": ws["name"],
+            "icon": ws["icon"], "description": ws["description"],
+        }
+        for wid, ws in WORKSPACES.items()
+    })
 
 
 @app.route("/api/analyses")
-def list_analyses():
+def list_analyses_route():
+    ws_id = request.args.get("workspace", "tpcds")
+    ws = WORKSPACES.get(ws_id, WORKSPACES["tpcds"])
     return jsonify([
         {"id": a["id"], "name": a["name"], "description": a["description"]}
-        for a in ANALYSES
+        for a in ws["analyses"]
     ])
 
 
@@ -441,7 +576,12 @@ def list_analyses():
 def analyze():
     body = request.get_json(force=True)
     user_input: str = body.get("query", "").strip()
-    force_id: str | None = body.get("id")  # 분석 목록에서 직접 클릭한 경우
+    force_id: str | None = body.get("id")
+    ws_id: str = body.get("workspace", "tpcds")
+
+    ws = WORKSPACES.get(ws_id, WORKSPACES["tpcds"])
+    analyses = ws["analyses"]
+    sql_dir  = ws["sql_dir"]
 
     # 인사 처리
     if user_input and not force_id and _is_greeting(user_input):
@@ -451,42 +591,40 @@ def analyze():
     if user_input and not force_id and _is_list_query(user_input):
         return jsonify({
             "type": "list",
-            "message": "다음 분석들을 지원합니다. 원하는 항목을 클릭하거나 자연어로 요청하세요.",
+            "message": f"[{ws['icon']} {ws['name']}] 사용 가능한 분석 목록입니다.",
             "analyses": [
                 {"id": a["id"], "name": a["name"], "description": a["description"]}
-                for a in ANALYSES
+                for a in analyses
             ],
         })
 
     # 분석 선택
     if force_id:
-        analysis = next((a for a in ANALYSES if a["id"] == force_id), None)
+        analysis = next((a for a in analyses if a["id"] == force_id), None)
         matched_by = "direct"
     else:
-        analysis = find_analysis(user_input)
+        analysis = find_analysis(user_input, analyses)
         matched_by = "nl"
 
     if analysis is None:
+        example_names = " / ".join(f'*"{a["name"]}"*' for a in analyses[:3])
         return jsonify({
             "type": "message",
             "message": (
-                "입력과 일치하는 분석을 찾지 못했습니다. 😅\n\n"
-                "**사용 가능한 분석 예시:**\n"
-                "- *\"월별 매출 트렌드 분석해줘\"*\n"
-                "- *\"고객 프로파일 보여줘\"*\n"
-                "- *\"채널별 매출 비교\"*\n"
-                "- *\"재고 현황 분석\"*\n\n"
-                "또는 왼쪽 목록에서 직접 선택하거나, "
+                f"입력과 일치하는 분석을 찾지 못했습니다. 😅\n\n"
+                f"**{ws['icon']} {ws['name']} 분석 예시:**\n"
+                f"{example_names}\n\n"
+                "왼쪽 목록에서 직접 선택하거나, "
                 "**\"어떤 분석을 할 수 있어?\"** 라고 물어보세요!"
             ),
         })
 
     # SQL 로드
-    sql = load_sql_query(analysis["id"], analysis.get("query_index", 0))
+    sql = load_sql_query(analysis["id"], analysis.get("query_index", 0), sql_dir=sql_dir)
     if not sql:
-        return jsonify({"error": f"SQL 파일을 찾을 수 없습니다: sql/{analysis['id'].zfill(2)}_*.sql"}), 500
+        return jsonify({"error": f"SQL 파일을 찾을 수 없습니다: {analysis['id']}_*.sql"}), 500
 
-    # Trino 실행
+    # Trino 실행 (육군 데이터는 memory catalog 사용)
     columns, rows, error = run_query(
         sql,
         catalog=analysis.get("catalog", "tpcds"),
@@ -495,7 +633,6 @@ def analyze():
     if error:
         return jsonify({"error": error}), 500
 
-    # 차트 설정
     chart = build_chart(analysis, columns or [], rows or [])
 
     return jsonify({
@@ -504,6 +641,7 @@ def analyze():
             "name": analysis["name"],
             "description": analysis["description"],
         },
+        "workspace": ws_id,
         "matched_by": matched_by,
         "sql": sql,
         "columns": columns or [],
@@ -557,18 +695,23 @@ def llm_status():
 @app.route("/api/chat", methods=["POST"])
 def chat():
     body = request.get_json(force=True)
-    messages = body.get("messages", [])
-    model = body.get("model", LLM_MODEL)
+    messages  = body.get("messages", [])
+    model     = body.get("model", LLM_MODEL)
+    ws_id     = body.get("workspace", "tpcds")
 
     if not messages:
         return jsonify({"error": "메시지가 없습니다."}), 400
+
+    ws = WORKSPACES.get(ws_id, WORKSPACES["tpcds"])
 
     from llm_agent import TrinoLLMAgent
     agent = TrinoLLMAgent(
         ollama_url=OLLAMA_URL,
         model=model,
         trino_url=TRINO_URL,
-        analyses=ANALYSES,
+        analyses=ws["analyses"],
+        sql_dir=ws["sql_dir"],
+        workspace_name=ws["name"],
     )
 
     def generate():
