@@ -1,5 +1,5 @@
 """
-Trino 자연어 분석 대시보드 + LLM 에이전트
+Trino 자연어 분석 대시보드 + LLM 에이전트 
 워크스페이스: TPC-DS sf1 / 육군 국방데이터 온톨로지
 """
 import json
