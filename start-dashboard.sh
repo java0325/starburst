@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Trino TPC-DS 자연어 분석 대시보드 실행 스크립트
+# Trino TPC-DS 자연어 분석 대시보드 + AI 에이전트 실행 스크립트
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DASHBOARD_DIR="${SCRIPT_DIR}/dashboard"
 TRINO_URL="${TRINO_URL:-http://localhost:8080}"
+OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
+LLM_MODEL="${LLM_MODEL:-sam860/exaone-4.0:1.2b}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-5050}"
 
 echo "======================================================"
-echo "  Trino TPC-DS 자연어 분석 대시보드"
+echo "  Trino TPC-DS 분석 대시보드 + AI 에이전트"
 echo "======================================================"
 
 # ── Python 3 확인 ──────────────────────────────────────────────────────────────
@@ -47,15 +49,29 @@ echo ">>> 패키지 설치 중..."
 "${PIP}" install -q -r "${DASHBOARD_DIR}/requirements.txt"
 echo "  설치 완료: flask, requests"
 
+# ── Ollama 상태 확인 (선택) ────────────────────────────────────────────────────
+echo ""
+echo ">>> Ollama LLM 서버 확인: ${OLLAMA_URL}"
+if curl -sf "${OLLAMA_URL}/api/tags" > /dev/null 2>&1; then
+    echo "  Ollama 연결 OK (AI 에이전트 사용 가능)"
+else
+    echo "  경고: Ollama 서버 미연결 (AI 에이전트 비활성)"
+    echo "  LLM 설치: ./setup-llm.sh"
+fi
+
 # ── 대시보드 실행 ──────────────────────────────────────────────────────────────
 echo ""
-echo ">>> 대시보드 시작"
-echo "  URL: http://localhost:${DASHBOARD_PORT}"
-echo "  Trino: ${TRINO_URL}"
+echo ">>> 대시보드 + AI 에이전트 시작"
+echo "  분석 대시보드: http://localhost:${DASHBOARD_PORT}"
+echo "  AI 에이전트  : http://localhost:${DASHBOARD_PORT}/agent"
+echo "  Trino       : ${TRINO_URL}"
+echo "  LLM 모델    : ${LLM_MODEL}"
 echo "  종료: Ctrl+C"
 echo "------------------------------------------------------"
 
 export TRINO_URL
+export OLLAMA_URL
+export LLM_MODEL
 export DASHBOARD_PORT
 
 cd "${DASHBOARD_DIR}"

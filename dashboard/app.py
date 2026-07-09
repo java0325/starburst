@@ -1,16 +1,19 @@
 """
-Trino TPC-DS 자연어 분석 대시보드
+Trino TPC-DS 자연어 분석 대시보드 + LLM 에이전트
 """
+import json
 import os
 import re
 import time
 
 import requests
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 app = Flask(__name__)
 
 TRINO_URL = os.environ.get("TRINO_URL", "http://localhost:8080")
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+LLM_MODEL = os.environ.get("LLM_MODEL", "sam860/exaone-4.0:1.2b")
 SQL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sql")
 
 # ── 분석 목록 정의 ─────────────────────────────────────────────────────────────
@@ -154,7 +157,42 @@ ANALYSES = [
 ]
 
 
+# ── 인텐트 분류 키워드 ────────────────────────────────────────────────────────
+_GREETING_KW = [
+    "안녕", "반가워", "반갑습니다", "hello", "hi", "헬로", "처음 만나",
+    "잘 있었어", "좋은 아침", "좋은 저녁", "좋은 밤", "ㅎㅇ", "잘 지냈어",
+    "뭐야", "누구야", "너는 누구", "당신은 누구", "자기소개",
+    "수고해", "고마워", "감사해", "감사합니다", "잘 부탁",
+]
+_LIST_KW = [
+    "어떤 분석", "무슨 분석", "어떤 것", "어떤거", "어떤 걸", "어떤 기능",
+    "뭘 할 수", "뭐 할 수", "무엇을 할 수", "무엇이 가능", "뭐가 가능",
+    "분석 목록", "분석 종류", "분석 리스트", "분석 가능", "전체 분석",
+    "모든 분석", "사용 가능한", "할 수 있어", "할 수 있나요", "할 수 있는",
+    "기능 목록", "기능이 뭐", "도움말", "help", "뭐 해줄", "뭐를 도와",
+    "무엇을 도와", "어떤 도움", "어떻게 사용", "사용법", "어떤 것들",
+]
+
+_GREET_REPLY = (
+    "안녕하세요! 👋 저는 **Trino TPC-DS 분석 대시보드**입니다.\n\n"
+    "TPC-DS 표준 데이터를 기반으로 **고객·매출·재고·프로모션** 등 "
+    "다양한 비즈니스 분석을 도와드립니다.\n\n"
+    "왼쪽 목록에서 분석을 선택하거나, 자연어로 분석을 요청해보세요.\n"
+    "예) *\"월별 매출 트렌드 분석해줘\"*, *\"어떤 분석을 할 수 있어?\"*"
+)
+
+
 # ── 자연어 매처 ────────────────────────────────────────────────────────────────
+
+def _is_greeting(text: str) -> bool:
+    t = text.lower().strip()
+    return len(t) < 35 and any(kw in t for kw in _GREETING_KW)
+
+
+def _is_list_query(text: str) -> bool:
+    t = text.lower().strip()
+    return any(kw in t for kw in _LIST_KW)
+
 
 def find_analysis(user_input: str) -> dict | None:
     """
@@ -395,6 +433,21 @@ def analyze():
     user_input: str = body.get("query", "").strip()
     force_id: str | None = body.get("id")  # 분석 목록에서 직접 클릭한 경우
 
+    # 인사 처리
+    if user_input and not force_id and _is_greeting(user_input):
+        return jsonify({"type": "message", "message": _GREET_REPLY})
+
+    # 목록 조회 처리
+    if user_input and not force_id and _is_list_query(user_input):
+        return jsonify({
+            "type": "list",
+            "message": "다음 분석들을 지원합니다. 원하는 항목을 클릭하거나 자연어로 요청하세요.",
+            "analyses": [
+                {"id": a["id"], "name": a["name"], "description": a["description"]}
+                for a in ANALYSES
+            ],
+        })
+
     # 분석 선택
     if force_id:
         analysis = next((a for a in ANALYSES if a["id"] == force_id), None)
@@ -404,7 +457,19 @@ def analyze():
         matched_by = "nl"
 
     if analysis is None:
-        return jsonify({"error": "입력과 일치하는 분석을 찾지 못했습니다. 더 구체적으로 입력해주세요."}), 404
+        return jsonify({
+            "type": "message",
+            "message": (
+                "입력과 일치하는 분석을 찾지 못했습니다. 😅\n\n"
+                "**사용 가능한 분석 예시:**\n"
+                "- *\"월별 매출 트렌드 분석해줘\"*\n"
+                "- *\"고객 프로파일 보여줘\"*\n"
+                "- *\"채널별 매출 비교\"*\n"
+                "- *\"재고 현황 분석\"*\n\n"
+                "또는 왼쪽 목록에서 직접 선택하거나, "
+                "**\"어떤 분석을 할 수 있어?\"** 라고 물어보세요!"
+            ),
+        })
 
     # SQL 로드
     sql = load_sql_query(analysis["id"], analysis.get("query_index", 0))
@@ -447,7 +512,72 @@ def health():
         return jsonify({"trino": "error", "message": str(e)}), 503
 
 
+# ── LLM 에이전트 라우트 ────────────────────────────────────────────────────────
+
+def _get_agent():
+    """TrinoLLMAgent 인스턴스를 지연 생성합니다."""
+    from llm_agent import TrinoLLMAgent  # 동일 디렉터리 임포트
+    model = request.get_json(force=True, silent=True) or {}
+    chosen_model = model.get("model", LLM_MODEL)
+    return TrinoLLMAgent(
+        ollama_url=OLLAMA_URL,
+        model=chosen_model,
+        trino_url=TRINO_URL,
+        analyses=ANALYSES,
+    )
+
+
+@app.route("/agent")
+def agent_page():
+    return render_template("agent.html", model=LLM_MODEL)
+
+
+@app.route("/api/llm/status")
+def llm_status():
+    from llm_agent import TrinoLLMAgent
+    agent = TrinoLLMAgent(
+        ollama_url=OLLAMA_URL,
+        model=LLM_MODEL,
+        trino_url=TRINO_URL,
+        analyses=ANALYSES,
+    )
+    return jsonify(agent.check_status())
+
+
+@app.route("/api/chat", methods=["POST"])
+def chat():
+    body = request.get_json(force=True)
+    messages = body.get("messages", [])
+    model = body.get("model", LLM_MODEL)
+
+    if not messages:
+        return jsonify({"error": "메시지가 없습니다."}), 400
+
+    from llm_agent import TrinoLLMAgent
+    agent = TrinoLLMAgent(
+        ollama_url=OLLAMA_URL,
+        model=model,
+        trino_url=TRINO_URL,
+        analyses=ANALYSES,
+    )
+
+    def generate():
+        for chunk in agent.stream_chat(messages):
+            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("DASHBOARD_PORT", 5050))
     print(f"대시보드 시작: http://localhost:{port}")
+    print(f"AI 에이전트: http://localhost:{port}/agent")
     app.run(host="0.0.0.0", port=port, debug=False)

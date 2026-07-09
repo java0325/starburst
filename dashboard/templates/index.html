@@ -294,6 +294,51 @@
     `;
   }
 
+  // ── 메시지(텍스트) 응답 렌더링 ─────────────────────────────────────────────
+  function replaceWithMessage(loadingId, message) {
+    const el = document.getElementById(loadingId);
+    if (!el) return;
+    // 간단한 마크다운: **bold**, *italic*, 줄바꿈
+    const html = escHtml(message)
+      .replace(/\*\*(.+?)\*\*/g, '<strong class="text-white">$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em class="text-slate-300">$1</em>')
+      .replace(/\n/g, '<br/>');
+    el.outerHTML = `
+      <div class="flex justify-start">
+        <div class="bot-bubble px-4 py-3 max-w-xl text-sm leading-relaxed text-slate-300">
+          ${html}
+        </div>
+      </div>
+    `;
+    document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+  }
+
+  // ── 분석 목록 응답 렌더링 ──────────────────────────────────────────────────
+  function replaceWithList(loadingId, data) {
+    const el = document.getElementById(loadingId);
+    if (!el) return;
+    const items = (data.analyses || []).map(a => `
+      <div class="flex items-start gap-2 py-2 border-b border-slate-700 last:border-0 cursor-pointer hover:bg-slate-800 rounded px-2 -mx-2 transition"
+           onclick="runById('${escHtml(a.id)}', '${escHtml(a.name)}')">
+        <span class="text-xs font-mono bg-indigo-900 text-indigo-300 px-1.5 py-0.5 rounded mt-0.5 flex-shrink-0">${escHtml(a.id)}</span>
+        <div>
+          <p class="text-sm font-medium text-slate-200">${escHtml(a.name)}</p>
+          <p class="text-xs text-slate-500 leading-snug">${escHtml(a.description)}</p>
+        </div>
+      </div>
+    `).join('');
+    el.outerHTML = `
+      <div class="flex justify-start">
+        <div class="bot-bubble px-4 py-3 w-full max-w-xl">
+          <p class="text-sm text-slate-400 mb-3">${escHtml(data.message || '사용 가능한 분석 목록입니다.')}</p>
+          <div>${items}</div>
+          <p class="text-xs text-slate-600 mt-3">항목을 클릭하면 바로 분석이 실행됩니다.</p>
+        </div>
+      </div>
+    `;
+    document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
+  }
+
   // ── 쿼리 실행 ───────────────────────────────────────────────────────────────
   async function sendQuery() {
     const input = document.getElementById('input');
@@ -312,7 +357,11 @@
         body: JSON.stringify({ query: text }),
       });
       const data = await resp.json();
-      if (!resp.ok) {
+      if (data.type === 'message') {
+        replaceWithMessage(loadingId, data.message);
+      } else if (data.type === 'list') {
+        replaceWithList(loadingId, data);
+      } else if (!resp.ok) {
         appendError(loadingId, data.error || '분석 실패');
       } else {
         replaceWithResult(loadingId, data);

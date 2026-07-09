@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Trino AI 분석 에이전트</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/highlight.min.js"></script>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #212121;
+      color: #ececec;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      height: 100dvh;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ── 사이드바 ── */
+    #sidebar {
+      width: 260px;
+      min-width: 260px;
+      background: #171717;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #2f2f2f;
+      transition: width 0.2s, min-width 0.2s;
+      overflow: hidden;
+    }
+    #sidebar.collapsed { width: 0; min-width: 0; border: none; }
+    .sidebar-logo {
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid #2f2f2f;
+    }
+    .logo-icon {
+      width: 32px; height: 32px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 14px; color: white; flex-shrink: 0;
+    }
+    .new-chat-btn {
+      margin: 10px;
+      padding: 9px 14px;
+      background: #2f2f2f;
+      border: 1px solid #3f3f3f;
+      border-radius: 8px;
+      color: #ececec;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex; align-items: center; gap: 8px;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    .new-chat-btn:hover { background: #3f3f3f; }
+    .conv-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+    .conv-item {
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #b0b0b0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      transition: background 0.1s, color 0.1s;
+    }
+    .conv-item:hover { background: #2a2a2a; color: #ececec; }
+    .conv-item.active { background: #2f2f2f; color: #ececec; }
+    .conv-group-label {
+      font-size: 11px; color: #5a5a5a;
+      padding: 8px 10px 4px;
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    .sidebar-footer {
+      padding: 12px;
+      border-top: 1px solid #2f2f2f;
+      font-size: 12px;
+    }
+    .model-badge {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 10px;
+      background: #2a2a2a;
+      border-radius: 6px;
+    }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .status-dot.online { background: #22c55e; }
+    .status-dot.offline { background: #ef4444; }
+    .status-dot.checking { background: #f59e0b; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* ── 메인 영역 ── */
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-width: 0;
+    }
+    .topbar {
+      height: 52px;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 10px;
+      border-bottom: 1px solid #2f2f2f;
+      flex-shrink: 0;
+    }
+    .toggle-btn {
+      width: 32px; height: 32px;
+      display: flex; align-items: center; justify-content: center;
+      background: none; border: none; cursor: pointer;
+      color: #8a8a8a; border-radius: 6px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .toggle-btn:hover { background: #2f2f2f; color: #ececec; }
+    .model-select {
+      background: #2f2f2f; border: 1px solid #3f3f3f;
+      border-radius: 8px; color: #ececec;
+      font-size: 13px; padding: 5px 10px;
+      cursor: pointer;
+    }
+    .model-select:focus { outline: none; }
+
+    /* ── 채팅 영역 ── */
+    #chat-scroll {
+      flex: 1;
+      overflow-y: auto;
+      scroll-behavior: smooth;
+    }
+    #chat-scroll::-webkit-scrollbar { width: 5px; }
+    #chat-scroll::-webkit-scrollbar-track { background: transparent; }
+    #chat-scroll::-webkit-scrollbar-thumb { background: #3f3f3f; border-radius: 3px; }
+    #chat-inner {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 24px 24px 8px;
+    }
+
+    /* ── 메시지 ── */
+    .msg-row { display: flex; gap: 14px; margin-bottom: 28px; align-items: flex-start; }
+    .msg-row.user { flex-direction: row-reverse; }
+
+    .avatar {
+      width: 34px; height: 34px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; flex-shrink: 0; font-weight: 600;
+    }
+    .avatar.ai {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: white;
+    }
+    .avatar.user {
+      background: #3f3f3f;
+      color: #ececec;
+    }
+
+    .msg-content { flex: 1; min-width: 0; }
+    .msg-row.user .msg-content {
+      display: flex; justify-content: flex-end;
+    }
+    .user-bubble {
+      background: #2f2f2f;
+      border: 1px solid #3f3f3f;
+      border-radius: 18px 18px 4px 18px;
+      padding: 10px 16px;
+      font-size: 14px;
+      line-height: 1.6;
+      max-width: 75%;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .ai-text {
+      font-size: 14px;
+      line-height: 1.75;
+      color: #ececec;
+    }
+    .ai-text p { margin: 0 0 10px; }
+    .ai-text p:last-child { margin-bottom: 0; }
+    .ai-text h1,.ai-text h2,.ai-text h3 { color: #fff; margin: 16px 0 8px; }
+    .ai-text ul,.ai-text ol { padding-left: 20px; margin: 8px 0; }
+    .ai-text li { margin-bottom: 4px; }
+    .ai-text pre {
+      background: #1a1a1a; border: 1px solid #333;
+      border-radius: 8px; padding: 14px; overflow-x: auto;
+      font-size: 13px; margin: 10px 0;
+    }
+    .ai-text code {
+      background: #1a1a1a; border-radius: 4px;
+      padding: 2px 5px; font-size: 12px; color: #e2e8f0;
+    }
+    .ai-text pre code { background: none; padding: 0; }
+    .ai-text table {
+      border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px;
+    }
+    .ai-text th { background: #1a1a1a; color: #94a3b8; padding: 6px 10px; text-align: left; }
+    .ai-text td { border-top: 1px solid #2f2f2f; padding: 5px 10px; }
+    .ai-text strong { color: #fff; }
+
+    /* 커서 깜빡임 */
+    .cursor-blink::after {
+      content: '▌';
+      display: inline-block;
+      animation: blink 0.8s step-end infinite;
+      color: #6366f1;
+      margin-left: 1px;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+    /* ── 도구 카드 ── */
+    .tool-card {
+      background: #1a1a1a;
+      border: 1px solid #2f2f2f;
+      border-radius: 10px;
+      margin: 10px 0;
+      overflow: hidden;
+    }
+    .tool-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 14px;
+      background: #222; cursor: pointer;
+      user-select: none;
+      font-size: 13px;
+    }
+    .tool-header:hover { background: #2a2a2a; }
+    .tool-icon { font-size: 15px; }
+    .tool-name { font-weight: 600; color: #a5b4fc; }
+    .tool-args { color: #64748b; font-size: 11px; font-family: monospace; margin-left: auto; }
+    .tool-status { font-size: 11px; }
+    .tool-status.running { color: #f59e0b; }
+    .tool-status.done { color: #22c55e; }
+    .tool-status.error { color: #ef4444; }
+    .tool-body { display: none; padding: 12px 14px; }
+    .tool-body.open { display: block; }
+
+    .result-chart { width: 100%; height: 280px; margin-bottom: 10px; }
+    .result-table-wrap { max-height: 220px; overflow-y: auto; }
+    .result-table {
+      width: 100%; border-collapse: collapse; font-size: 12px;
+    }
+    .result-table th {
+      position: sticky; top: 0;
+      background: #1a1a1a; color: #64748b;
+      padding: 5px 10px; text-align: left;
+      border-bottom: 1px solid #2f2f2f; white-space: nowrap;
+    }
+    .result-table td {
+      padding: 4px 10px; color: #cbd5e1;
+      border-bottom: 1px solid #1e293b; white-space: nowrap;
+    }
+    .result-table tr:hover td { background: #1e293b; }
+    .result-sql {
+      background: #111; border-radius: 6px; padding: 10px;
+      font-family: monospace; font-size: 11px; color: #4ade80;
+      white-space: pre-wrap; word-break: break-all; margin-top: 8px;
+    }
+    .result-list-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 0; border-bottom: 1px solid #1e293b; font-size: 13px;
+    }
+    .result-list-item:last-child { border: none; }
+    .result-list-id {
+      width: 28px; text-align: center;
+      background: #1e293b; border-radius: 4px;
+      font-size: 11px; color: #6366f1; padding: 2px 0; flex-shrink: 0;
+    }
+
+    /* ── 생각 중 인디케이터 ── */
+    .thinking-indicator {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; color: #6b7280; padding: 4px 0;
+    }
+    .thinking-dots { display: flex; gap: 3px; }
+    .thinking-dots span {
+      width: 5px; height: 5px; border-radius: 50%;
+      background: #6366f1; display: block;
+      animation: bounce 1.2s infinite;
+    }
+    .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-5px)} }
+
+    /* ── 입력 영역 ── */
+    .input-zone {
+      padding: 16px 24px 20px;
+      flex-shrink: 0;
+    }
+    .input-box {
+      max-width: 800px;
+      margin: 0 auto;
+      background: #2f2f2f;
+      border: 1px solid #3f3f3f;
+      border-radius: 14px;
+      display: flex; align-items: flex-end;
+      padding: 10px 12px;
+      transition: border-color 0.15s;
+      gap: 8px;
+    }
+    .input-box:focus-within { border-color: #6366f1; }
+    #user-input {
+      flex: 1;
+      background: none; border: none; outline: none;
+      color: #ececec; font-size: 14px;
+      resize: none; max-height: 200px;
+      line-height: 1.5; padding: 2px 0;
+      font-family: inherit;
+      scrollbar-width: thin;
+    }
+    #user-input::placeholder { color: #5a5a5a; }
+    .send-btn {
+      width: 34px; height: 34px; border-radius: 8px;
+      border: none; cursor: pointer; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    .send-btn.active { background: #6366f1; }
+    .send-btn.inactive { background: #3f3f3f; cursor: default; }
+    .send-btn.stop { background: #ef4444; }
+    .input-hint {
+      text-align: center; font-size: 11px; color: #4a4a4a; margin-top: 8px;
+      max-width: 800px; margin-left: auto; margin-right: auto;
+    }
+
+    /* ── 빈 화면 ── */
+    #welcome {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 40px 24px;
+      text-align: center;
+    }
+    .welcome-icon {
+      width: 64px; height: 64px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border-radius: 20px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 30px; margin-bottom: 20px;
+    }
+    .welcome-title { font-size: 24px; font-weight: 600; color: #fff; margin-bottom: 8px; }
+    .welcome-sub { font-size: 14px; color: #8a8a8a; line-height: 1.6; margin-bottom: 28px; }
+    .example-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 8px; max-width: 580px; width: 100%;
+    }
+    .example-card {
+      background: #2f2f2f; border: 1px solid #3f3f3f;
+      border-radius: 10px; padding: 12px 14px;
+      cursor: pointer; text-align: left;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .example-card:hover { background: #3a3a3a; border-color: #6366f1; }
+    .example-card .ex-title { font-size: 13px; font-weight: 500; color: #ececec; margin-bottom: 3px; }
+    .example-card .ex-sub { font-size: 11px; color: #6b7280; }
+
+    @media (max-width: 600px) {
+      .example-grid { grid-template-columns: 1fr; }
+      #sidebar { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══ 사이드바 ══════════════════════════════════════════════ -->
+<aside id="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon">T</div>
+    <div>
+      <div style="font-size:14px;font-weight:600;color:#fff">Trino AI</div>
+      <div style="font-size:11px;color:#6b7280">분석 에이전트</div>
+    </div>
+  </div>
+
+  <button class="new-chat-btn" onclick="newChat()">
+    <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+    </svg>
+    새 대화
+  </button>
+
+  <div class="conv-list" id="conv-list">
+    <!-- JS로 채워짐 -->
+  </div>
+
+  <div class="sidebar-footer">
+    <div class="model-badge">
+      <span class="status-dot checking" id="status-dot"></span>
+      <span style="font-size:11px;color:#8a8a8a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="model-name">{{ model }}</span>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:6px">
+      <a href="/" style="font-size:11px;color:#6b7280;text-decoration:none;
+                         padding:4px 8px;background:#2a2a2a;border-radius:5px;
+                         transition:color 0.1s" onmouseover="this.style.color='#ececec'" onmouseout="this.style.color='#6b7280'">
+        📊 대시보드
+      </a>
+    </div>
+  </div>
+</aside>
+
+<!-- ══ 메인 ══════════════════════════════════════════════════ -->
+<main id="main">
+
+  <!-- 상단 바 -->
+  <div class="topbar">
+    <button class="toggle-btn" onclick="toggleSidebar()" title="사이드바 토글">
+      <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+      </svg>
+    </button>
+    <select class="model-select" id="model-select" onchange="onModelChange()">
+      <option value="sam860/exaone-4.0:1.2b">EXAONE 4.0 1.2B (추천)</option>
+      <option value="qwen2.5:3b">Qwen 2.5 3B</option>
+      <option value="llama3.2:3b">Llama 3.2 3B</option>
+    </select>
+    <div style="margin-left:auto;display:flex;gap:8px">
+      <span id="gen-status" style="font-size:12px;color:#6b7280"></span>
+    </div>
+  </div>
+
+  <!-- 채팅 스크롤 영역 -->
+  <div id="chat-scroll">
+    <!-- 환영 화면 -->
+    <div id="welcome">
+      <div class="welcome-icon">🤖</div>
+      <div class="welcome-title">Trino AI 분석 에이전트</div>
+      <div class="welcome-sub">
+        자연어로 질문하면 TPC-DS 데이터를 분석하고<br/>
+        차트와 인사이트로 결과를 보여드립니다.
+      </div>
+      <div class="example-grid">
+        <div class="example-card" onclick="useExample('월별 매출 트렌드를 분석해서 보여줘')">
+          <div class="ex-title">📈 월별 매출 트렌드</div>
+          <div class="ex-sub">시계열로 매출 변화 분석</div>
+        </div>
+        <div class="example-card" onclick="useExample('고객 프로파일을 분석해줘')">
+          <div class="ex-title">👥 고객 프로파일</div>
+          <div class="ex-sub">인구통계 분포 분석</div>
+        </div>
+        <div class="example-card" onclick="useExample('채널별 매출을 비교해줘')">
+          <div class="ex-title">🏪 채널별 매출 비교</div>
+          <div class="ex-sub">매장·카탈로그·웹 채널 비교</div>
+        </div>
+        <div class="example-card" onclick="useExample('어떤 분석을 할 수 있어?')">
+          <div class="ex-title">📋 분석 목록 보기</div>
+          <div class="ex-sub">사용 가능한 모든 분석 확인</div>
+        </div>
+        <div class="example-card" onclick="useExample('store_sales 테이블에서 상위 5개 매장의 총매출을 조회해줘')">
+          <div class="ex-title">🔍 직접 SQL 조회</div>
+          <div class="ex-sub">자연어로 SQL 쿼리 실행</div>
+        </div>
+        <div class="example-card" onclick="useExample('고객 생애 가치(CLV) TOP 10을 분석해줘')">
+          <div class="ex-title">💎 CLV 분석</div>
+          <div class="ex-sub">우량 고객 가치 분석</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 메시지는 JS로 #chat-inner에 추가 -->
+    <div id="chat-inner" style="display:none"></div>
+  </div>
+
+  <!-- 입력 영역 -->
+  <div class="input-zone">
+    <div class="input-box">
+      <textarea
+        id="user-input"
+        rows="1"
+        placeholder="무엇이든 분석해드립니다... (Shift+Enter: 줄바꿈, Enter: 전송)"
+        onkeydown="handleKey(event)"
+        oninput="autoResize(this); updateSendBtn()"
+      ></textarea>
+      <button class="send-btn inactive" id="send-btn" onclick="sendMessage()" title="전송">
+        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+        </svg>
+      </button>
+    </div>
+    <div class="input-hint">
+      Enter로 전송 · Shift+Enter로 줄바꿈 · 모델: <span id="current-model-hint">EXAONE 4.0 1.2B</span>
+    </div>
+  </div>
+</main>
+
+<script>
+// ════════════════════════════════════════════════════════
+//  설정 & 상태
+// ════════════════════════════════════════════════════════
+const state = {
+  generating: false,
+  abortCtrl: null,
+  conversations: JSON.parse(localStorage.getItem('trino_conversations') || '[]'),
+  currentId: null,
+  model: '{{ model }}',
+};
+
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+  highlight(code, lang) {
+    if (lang && hljs.getLanguage(lang)) {
+      return hljs.highlight(code, { language: lang }).value;
+    }
+    return hljs.highlightAuto(code).value;
+  }
+});
+
+// ════════════════════════════════════════════════════════
+//  상태 확인
+// ════════════════════════════════════════════════════════
+let statusTimer;
+async function checkStatus() {
+  const dot  = document.getElementById('status-dot');
+  const name = document.getElementById('model-name');
+  dot.className = 'status-dot checking';
+  try {
+    const r = await fetch('/api/llm/status');
+    const d = await r.json();
+    if (d.ok) {
+      dot.className = d.model_loaded ? 'status-dot online' : 'status-dot checking';
+      name.textContent = state.model + (d.model_loaded ? '' : ' (로딩 중)');
+    } else throw new Error(d.error);
+  } catch {
+    dot.className = 'status-dot offline';
+    name.textContent = 'Ollama 연결 안됨';
+  }
+}
+checkStatus();
+statusTimer = setInterval(checkStatus, 30000);
+
+// ════════════════════════════════════════════════════════
+//  사이드바 & 대화 목록
+// ════════════════════════════════════════════════════════
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('collapsed');
+}
+
+function renderConvList() {
+  const el = document.getElementById('conv-list');
+  const convs = state.conversations.slice().reverse();
+  if (!convs.length) {
+    el.innerHTML = '<div style="padding:16px 10px;font-size:12px;color:#4a4a4a;text-align:center">대화 내역 없음</div>';
+    return;
+  }
+  el.innerHTML = `<div class="conv-group-label">최근 대화</div>` +
+    convs.map(c => `
+      <div class="conv-item ${c.id === state.currentId ? 'active' : ''}"
+           onclick="loadConv('${c.id}')"
+           title="${esc(c.title)}">
+        ${esc(c.title || '새 대화')}
+      </div>
+    `).join('');
+}
+
+function saveConversations() {
+  localStorage.setItem('trino_conversations', JSON.stringify(state.conversations));
+}
+
+function newChat() {
+  state.currentId = null;
+  document.getElementById('welcome').style.display = 'flex';
+  document.getElementById('chat-inner').style.display = 'none';
+  document.getElementById('chat-inner').innerHTML = '';
+  renderConvList();
+  document.getElementById('user-input').focus();
+}
+
+function loadConv(id) {
+  const conv = state.conversations.find(c => c.id === id);
+  if (!conv) return;
+  state.currentId = id;
+
+  document.getElementById('welcome').style.display = 'none';
+  const ci = document.getElementById('chat-inner');
+  ci.style.display = 'block';
+  ci.innerHTML = '';
+
+  conv.messages.forEach(msg => {
+    if (msg.role === 'user') {
+      appendUserMsg(msg.content, false);
+    } else if (msg.role === 'assistant') {
+      const row = appendAiRow();
+      setAiContent(row, msg.content, msg.toolCards || []);
+    }
+  });
+  renderConvList();
+  scrollToBottom();
+}
+
+function getCurrentConv() {
+  if (!state.currentId) return null;
+  return state.conversations.find(c => c.id === state.currentId) || null;
+}
+
+function ensureConv(firstUserMsg) {
+  if (state.currentId) return;
+  const id = Date.now().toString();
+  state.currentId = id;
+  const title = firstUserMsg.slice(0, 40) + (firstUserMsg.length > 40 ? '...' : '');
+  state.conversations.push({ id, title, messages: [] });
+  saveConversations();
+  renderConvList();
+}
+
+// ════════════════════════════════════════════════════════
+//  메시지 렌더링
+// ════════════════════════════════════════════════════════
+function appendUserMsg(text, scroll = true) {
+  const ci = document.getElementById('chat-inner');
+  ci.style.display = 'block';
+  document.getElementById('welcome').style.display = 'none';
+
+  const row = document.createElement('div');
+  row.className = 'msg-row user';
+  row.innerHTML = `
+    <div class="avatar user">나</div>
+    <div class="msg-content">
+      <div class="user-bubble">${esc(text)}</div>
+    </div>
+  `;
+  ci.appendChild(row);
+  if (scroll) scrollToBottom();
+  return row;
+}
+
+function appendAiRow() {
+  const ci = document.getElementById('chat-inner');
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  row.innerHTML = `
+    <div class="avatar ai">AI</div>
+    <div class="msg-content">
+      <div class="ai-text" id="ai-text-${Date.now()}"></div>
+    </div>
+  `;
+  ci.appendChild(row);
+  scrollToBottom();
+  return row;
+}
+
+let chartCounter = 0;
+
+function setAiContent(row, markdownText, toolCards = []) {
+  const textEl = row.querySelector('.ai-text');
+  if (!textEl) return;
+
+  // 도구 카드 먼저
+  toolCards.forEach(tc => {
+    textEl.appendChild(buildToolCard(tc, false));
+  });
+
+  // 마크다운 텍스트
+  if (markdownText) {
+    const md = document.createElement('div');
+    md.innerHTML = marked.parse(markdownText);
+    textEl.appendChild(md);
+    // 코드 하이라이팅
+    md.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+  }
+  textEl.classList.remove('cursor-blink');
+  scrollToBottom();
+}
+
+function buildToolCard(tc, startOpen = true) {
+  const result = tc.result || {};
+  const hasError = !!result.error;
+  const isRunAnalysis = result.tool === 'run_analysis';
+  const isRunSql = result.tool === 'run_sql';
+  const isList = result.tool === 'list_analyses';
+
+  const toolNameMap = {
+    run_analysis: '📊 분석 실행',
+    run_sql: '🔍 SQL 실행',
+    list_analyses: '📋 분석 목록',
+  };
+  const displayName = toolNameMap[tc.name] || tc.name;
+  const argsStr = Object.entries(tc.args || {}).map(([k,v]) => `${k}=${v}`).join(', ');
+  const statusClass = hasError ? 'error' : 'done';
+  const statusText = hasError ? '오류' : '완료';
+
+  const cardId = `tc-${Date.now()}-${++chartCounter}`;
+  const bodyId = `tb-${cardId}`;
+  const chartId = `chart-${cardId}`;
+
+  let bodyHtml = '';
+
+  if (hasError) {
+    bodyHtml = `<div style="color:#ef4444;font-size:13px">⚠️ ${esc(result.error)}</div>`;
+  } else if (isList) {
+    const items = (result.data || []).map(a => `
+      <div class="result-list-item">
+        <span class="result-list-id">${esc(a.id)}</span>
+        <span style="font-weight:500;color:#ececec;font-size:13px">${esc(a.name)}</span>
+        <span style="color:#64748b;font-size:11px;margin-left:auto">${esc(a.description.slice(0,35))}...</span>
+      </div>
+    `).join('');
+    bodyHtml = `<div>${items}</div>`;
+  } else {
+    const cols = result.columns || [];
+    const rows = result.rows || [];
+    const sql = result.sql || '';
+    const chart = result.chart;
+
+    if (chart) {
+      bodyHtml += `<div id="${chartId}" class="result-chart"></div>`;
+    }
+    if (rows.length) {
+      bodyHtml += `
+        <div style="margin-bottom:6px;font-size:11px;color:#64748b">${rows.length}행 반환</div>
+        <div class="result-table-wrap">
+          <table class="result-table">
+            <thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+            <tbody>${rows.map(r =>
+              `<tr>${r.map(v => `<td>${v === null ? '<span style="color:#475569">NULL</span>' : esc(String(v))}</td>`).join('')}</tr>`
+            ).join('')}</tbody>
+          </table>
+        </div>`;
+    }
+    if (sql) {
+      bodyHtml += `
+        <details style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:11px;color:#64748b;user-select:none">SQL 보기</summary>
+          <div class="result-sql">${esc(sql)}</div>
+        </details>`;
+    }
+    if (!rows.length && !chart) {
+      bodyHtml += `<div style="color:#64748b;font-size:13px">결과 없음</div>`;
+    }
+  }
+
+  const div = document.createElement('div');
+  div.className = 'tool-card';
+  div.innerHTML = `
+    <div class="tool-header" onclick="toggleToolBody('${bodyId}')">
+      <span class="tool-icon">${displayName.split(' ')[0]}</span>
+      <span class="tool-name">${displayName.split(' ').slice(1).join(' ')}</span>
+      <span class="tool-args">${esc(argsStr)}</span>
+      <span class="tool-status ${statusClass}">${statusText}</span>
+      <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin-left:4px;color:#6b7280">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+      </svg>
+    </div>
+    <div class="tool-body ${startOpen ? 'open' : ''}" id="${bodyId}">
+      ${bodyHtml}
+    </div>
+  `;
+
+  // 차트 렌더링 (DOM 추가 후)
+  setTimeout(() => {
+    const chart = (result.chart);
+    if (chart && document.getElementById(chartId)) {
+      Plotly.newPlot(chartId, chart.data, chart.layout, {
+        responsive: true, displayModeBar: true,
+        modeBarButtonsToRemove: ['sendDataToCloud'],
+      });
+    }
+  }, 50);
+
+  return div;
+}
+
+function toggleToolBody(id) {
+  document.getElementById(id)?.classList.toggle('open');
+}
+
+// ════════════════════════════════════════════════════════
+//  스트리밍 전송
+// ════════════════════════════════════════════════════════
+async function sendMessage() {
+  if (state.generating) {
+    stopGeneration();
+    return;
+  }
+  const input = document.getElementById('user-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  autoResize(input);
+  updateSendBtn();
+
+  ensureConv(text);
+  const conv = getCurrentConv();
+
+  // 대화 기록에 사용자 메시지 추가
+  conv.messages.push({ role: 'user', content: text });
+  saveConversations();
+
+  appendUserMsg(text);
+
+  // AI 메시지 행 준비
+  const aiRow = appendAiRow();
+  const textEl = aiRow.querySelector('.ai-text');
+  textEl.classList.add('cursor-blink');
+
+  // "생각 중" 표시
+  const thinkingEl = document.createElement('div');
+  thinkingEl.className = 'thinking-indicator';
+  thinkingEl.innerHTML = `
+    <div class="thinking-dots">
+      <span></span><span></span><span></span>
+    </div>
+    <span>분석 중...</span>
+  `;
+  textEl.appendChild(thinkingEl);
+
+  setGenerating(true);
+
+  // API 메시지 형식
+  const apiMessages = conv.messages
+    .filter(m => m.role === 'user' || m.role === 'assistant')
+    .map(m => ({ role: m.role, content: m.content }));
+
+  const model = document.getElementById('model-select').value;
+
+  let fullText = '';
+  const toolCards = [];
+  let currentToolCard = null;
+
+  state.abortCtrl = new AbortController();
+
+  try {
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: apiMessages, model }),
+      signal: state.abortCtrl.signal,
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      const lines = buf.split('\n');
+      buf = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let evt;
+        try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+
+        if (evt.type === 'thinking') {
+          // 이미 thinking indicator 표시 중
+        } else if (evt.type === 'token') {
+          if (thinkingEl.parentNode) thinkingEl.remove();
+          fullText += evt.content;
+          // 실시간 마크다운 렌더 (마지막 도구 카드 이후에 추가)
+          updateStreamText(textEl, toolCards, fullText);
+          scrollToBottom();
+        } else if (evt.type === 'tool_start') {
+          if (thinkingEl.parentNode) thinkingEl.remove();
+          currentToolCard = { name: evt.name, args: evt.args, result: null };
+          // 실행 중 카드 표시
+          const pendingCard = buildPendingToolCard(evt.name, evt.args);
+          textEl.appendChild(pendingCard);
+          currentToolCard._pendingEl = pendingCard;
+          scrollToBottom();
+        } else if (evt.type === 'tool_result') {
+          if (currentToolCard) {
+            currentToolCard.result = evt.result;
+            if (currentToolCard._pendingEl) {
+              currentToolCard._pendingEl.remove();
+            }
+            const card = buildToolCard(currentToolCard, true);
+            textEl.appendChild(card);
+            toolCards.push(currentToolCard);
+            currentToolCard = null;
+          }
+          scrollToBottom();
+        } else if (evt.type === 'done') {
+          break;
+        } else if (evt.type === 'error') {
+          if (thinkingEl.parentNode) thinkingEl.remove();
+          const errEl = document.createElement('div');
+          errEl.style.cssText = 'color:#ef4444;font-size:13px;margin-top:8px';
+          errEl.textContent = `⚠️ ${evt.message}`;
+          textEl.appendChild(errEl);
+          break;
+        }
+      }
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      if (thinkingEl.parentNode) thinkingEl.remove();
+      const errEl = document.createElement('div');
+      errEl.style.cssText = 'color:#ef4444;font-size:13px';
+      errEl.textContent = `⚠️ 연결 오류: ${err.message}`;
+      textEl.appendChild(errEl);
+    }
+  }
+
+  textEl.classList.remove('cursor-blink');
+  if (thinkingEl.parentNode) thinkingEl.remove();
+
+  // 대화 기록 저장
+  conv.messages.push({ role: 'assistant', content: fullText, toolCards });
+  saveConversations();
+
+  setGenerating(false);
+  scrollToBottom();
+}
+
+function buildPendingToolCard(name, args) {
+  const toolNameMap = {
+    run_analysis: '📊 분석 실행',
+    run_sql: '🔍 SQL 실행',
+    list_analyses: '📋 분석 목록',
+  };
+  const displayName = toolNameMap[name] || name;
+  const argsStr = Object.entries(args || {}).map(([k,v]) => `${k}=${v}`).join(', ');
+
+  const div = document.createElement('div');
+  div.className = 'tool-card';
+  div.innerHTML = `
+    <div class="tool-header">
+      <span class="tool-icon">${displayName.split(' ')[0]}</span>
+      <span class="tool-name">${displayName.split(' ').slice(1).join(' ')}</span>
+      <span class="tool-args">${esc(argsStr)}</span>
+      <span class="tool-status running" style="display:flex;align-items:center;gap:5px">
+        <span class="thinking-dots" style="display:inline-flex;gap:2px">
+          <span style="width:4px;height:4px;border-radius:50%;background:#f59e0b;display:block;animation:bounce 1.2s infinite"></span>
+          <span style="width:4px;height:4px;border-radius:50%;background:#f59e0b;display:block;animation:bounce 1.2s 0.2s infinite"></span>
+          <span style="width:4px;height:4px;border-radius:50%;background:#f59e0b;display:block;animation:bounce 1.2s 0.4s infinite"></span>
+        </span>
+        실행 중
+      </span>
+    </div>
+  `;
+  return div;
+}
+
+let _lastStreamId = null;
+function updateStreamText(textEl, toolCards, text) {
+  // 기존 스트림 텍스트 요소 찾거나 생성
+  let streamEl = textEl.querySelector('.stream-text');
+  if (!streamEl) {
+    streamEl = document.createElement('div');
+    streamEl.className = 'stream-text';
+    textEl.appendChild(streamEl);
+  }
+  streamEl.innerHTML = marked.parse(text);
+  streamEl.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+}
+
+// ════════════════════════════════════════════════════════
+//  UI 유틸
+// ════════════════════════════════════════════════════════
+function stopGeneration() {
+  if (state.abortCtrl) state.abortCtrl.abort();
+  setGenerating(false);
+}
+
+function setGenerating(on) {
+  state.generating = on;
+  const btn = document.getElementById('send-btn');
+  const status = document.getElementById('gen-status');
+  if (on) {
+    btn.className = 'send-btn stop';
+    btn.title = '생성 중지';
+    btn.innerHTML = `<svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
+    status.textContent = '생성 중...';
+  } else {
+    updateSendBtn();
+    btn.title = '전송';
+    btn.innerHTML = `<svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>`;
+    status.textContent = '';
+  }
+}
+
+function updateSendBtn() {
+  if (state.generating) return;
+  const btn = document.getElementById('send-btn');
+  const hasText = document.getElementById('user-input').value.trim().length > 0;
+  btn.className = `send-btn ${hasText ? 'active' : 'inactive'}`;
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+}
+
+function scrollToBottom() {
+  const cs = document.getElementById('chat-scroll');
+  cs.scrollTop = cs.scrollHeight;
+}
+
+function useExample(text) {
+  document.getElementById('user-input').value = text;
+  autoResize(document.getElementById('user-input'));
+  updateSendBtn();
+  sendMessage();
+}
+
+function onModelChange() {
+  const sel = document.getElementById('model-select');
+  state.model = sel.value;
+  document.getElementById('current-model-hint').textContent = sel.options[sel.selectedIndex].text;
+  checkStatus();
+}
+
+function esc(str) {
+  return String(str ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ════════════════════════════════════════════════════════
+//  초기화
+// ════════════════════════════════════════════════════════
+renderConvList();
+document.getElementById('user-input').focus();
+</script>
+</body>
+</html>
