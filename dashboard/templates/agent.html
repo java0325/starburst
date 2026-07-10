@@ -369,7 +369,10 @@
     .welcome-sub { font-size: 14px; color: #8a8a8a; line-height: 1.6; margin-bottom: 28px; }
     .example-grid {
       display: grid; grid-template-columns: 1fr 1fr;
-      gap: 8px; max-width: 580px; width: 100%;
+      gap: 8px; max-width: 640px; width: 100%;
+    }
+    .example-grid.cols-3 {
+      grid-template-columns: 1fr 1fr 1fr; max-width: 740px;
     }
     .example-card {
       background: #2f2f2f; border: 1px solid #3f3f3f;
@@ -583,6 +586,9 @@ const WS_META = {
       { icon: '⏱', title: '탐지-대응 교차 분석',   sub: '구역별 평균 대응 시간(분) 비교',    query: '구역별 탐지 대응 교차 분석을 해줘' },
       { icon: '🌙', title: '시간대별 도발 패턴',    sub: '0~23시 활동 집중 시간대 분석',      query: '시간대별 도발 패턴을 분석해줘' },
       { icon: '🚨', title: '경계태세 발령 분석',    sub: '진돗개하나·경계태세강화 격상 현황',  query: '경계태세 발령 현황을 분석해줘' },
+      { icon: '⚔️', title: '병력 이동 흐름도',      sub: '서해안→중부전선 Sankey 시각화',     query: 'SV1 병력 이동 흐름도 분석을 실행하고 생키 다이어그램의 주요 이동 경로 패턴과 군사적 인사이트를 설명해줘' },
+      { icon: '🛰', title: '무인기 침투 밀도',      sub: 'GIS KDE 히트맵 + 타격 좌표 분석',   query: 'SV2 무인기 침투 밀도 GIS 히트맵 분석을 실행하고 핫스팟 위치와 도발 원점 타격 현황의 전술적 인사이트를 설명해줘' },
+      { icon: '⚡', title: '센서 이상 징후 탐지',   sub: 'MA+Z-Score 시계열 Anomaly 탐지',    query: 'SV3 무인기 센서 이상 징후 탐지 분석을 실행하고 탐지된 이상 패턴과 방해전파 사격 효과에 대한 인사이트를 설명해줘' },
     ],
   },
 };
@@ -598,9 +604,14 @@ function renderWelcomeScreen(wsId) {
   welcomeEl.querySelector('.welcome-title').textContent = `${ws.name} AI 에이전트`;
   welcomeEl.querySelector('.welcome-sub').innerHTML     = ws.sub;
 
-  document.getElementById('example-grid').innerHTML = ws.examples.map(ex => `
-    <div class="example-card" data-query="${esc(ex.query)}" onclick="useExample(this.dataset.query)">
-      <div class="ex-title">${ex.icon} ${ex.title}</div>
+  const grid = document.getElementById('example-grid');
+  grid.classList.toggle('cols-3', ws.examples.length > 6);
+  grid.innerHTML = ws.examples.map(ex => `
+    <div class="example-card"
+         data-query="${esc(ex.query)}"
+         ${ex.id ? `data-analysis-id="${esc(ex.id)}"` : ''}
+         onclick="useExample(this.dataset.query, this.dataset.analysisId)">
+      <div class="ex-title">${ex.icon} ${ex.title}${ex.id ? ' <span style="font-size:9px;color:#10b981;font-family:monospace;opacity:.75">✦</span>' : ''}</div>
       <div class="ex-sub">${ex.sub}</div>
     </div>
   `).join('');
@@ -917,6 +928,24 @@ function buildToolCard(tc, startOpen = true) {
       </div>
     `).join('');
     bodyHtml = `<div>${items}</div>`;
+  } else if (result.html_viz) {
+    // html_viz: iframe 렌더링
+    const analysis = result.analysis || {};
+    bodyHtml = `
+      <div style="margin-bottom:8px;font-size:11px;color:#86efac">
+        ✦ ${esc(analysis.description || analysis.name || '고급 시각화')}
+      </div>
+      <iframe
+        src="${esc(result.viz_url)}"
+        style="width:100%;height:480px;border:none;border-radius:8px;background:#0a1628;display:block"
+        loading="lazy"
+        sandbox="allow-scripts allow-same-origin"
+        title="${esc(analysis.name || '')}">
+      </iframe>
+      <p style="font-size:10px;color:#475569;margin-top:5px;font-family:monospace">
+        ↗ 새 탭에서 보기:
+        <a href="${esc(result.viz_url)}" target="_blank" style="color:#38bdf8">${esc(result.viz_url)}</a>
+      </p>`;
   } else {
     const cols  = result.columns || [];
     const rows  = result.rows || [];
@@ -1242,13 +1271,92 @@ function scrollToBottom() {
   cs.scrollTop = cs.scrollHeight;
 }
 
-function useExample(text) {
+function useExample(text, analysisId) {
+  // html_viz 분석 (SV1/SV2/SV3)은 LLM을 거치지 않고 직접 실행
+  if (analysisId) {
+    runAnalysisViz(analysisId, text);
+    return;
+  }
   const inp = document.getElementById('user-input');
-  inp.blur();          // IME 조합 종료
+  inp.blur();
   inp.value = text;
   autoResize(inp);
   updateSendBtn();
   sendMessage();
+}
+
+// html_viz 타입 분석을 직접 실행해서 iframe으로 렌더링
+async function runAnalysisViz(analysisId, label) {
+  ensureConv(label);
+  appendUserMsg(label);
+
+  // 로딩 카드 삽입
+  const aiRow = appendAiRow();
+  const textEl = aiRow.querySelector('.ai-text');
+  textEl.classList.add('cursor-blink');
+  const thinkingEl = document.createElement('div');
+  thinkingEl.className = 'thinking-indicator';
+  thinkingEl.innerHTML = `<div class="thinking-dots"><span></span><span></span><span></span></div><span>시각화 로딩 중...</span>`;
+  textEl.appendChild(thinkingEl);
+  scrollToBottom();
+
+  try {
+    const resp = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: analysisId, workspace: state.workspace }),
+    });
+    const data = await resp.json();
+    thinkingEl.remove();
+    textEl.classList.remove('cursor-blink');
+
+    if (data.error) {
+      const errEl = document.createElement('div');
+      errEl.style.cssText = 'color:#ef4444;font-size:13px';
+      errEl.textContent = `⚠️ ${data.error}`;
+      textEl.appendChild(errEl);
+    } else if (data.type === 'html_viz') {
+      const analysis = data.analysis || {};
+      const card = document.createElement('div');
+      card.className = 'tool-card';
+      card.innerHTML = `
+        <div class="tool-header" onclick="toggleToolBody('viz-body-${analysisId}')">
+          <span class="tool-icon">🎯</span>
+          <span class="tool-name">고급 시각화 실행</span>
+          <span class="tool-args">${esc(analysis.id || '')} ${esc(analysis.name || '')}</span>
+          <span class="tool-status done">완료</span>
+          <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin-left:4px;color:#6b7280">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </div>
+        <div class="tool-body open" id="viz-body-${analysisId}">
+          <div style="margin-bottom:8px;font-size:11px;color:#86efac">
+            ✦ ${esc(analysis.description || analysis.name || '')}
+          </div>
+          <iframe
+            src="${esc(data.viz_url)}"
+            style="width:100%;height:480px;border:none;border-radius:8px;background:#0a1628;display:block"
+            loading="lazy"
+            sandbox="allow-scripts allow-same-origin"
+            title="${esc(analysis.name || '')}">
+          </iframe>
+          <p style="font-size:10px;color:#475569;margin-top:5px;font-family:monospace">
+            ↗ 새 탭에서 보기:
+            <a href="${esc(data.viz_url)}" target="_blank" style="color:#38bdf8">${esc(data.viz_url)}</a>
+          </p>
+        </div>
+      `;
+      textEl.appendChild(card);
+    }
+  } catch (e) {
+    thinkingEl.remove();
+    textEl.classList.remove('cursor-blink');
+    const errEl = document.createElement('div');
+    errEl.style.cssText = 'color:#ef4444;font-size:13px';
+    errEl.textContent = `⚠️ 요청 실패: ${e.message}`;
+    textEl.appendChild(errEl);
+  }
+  scrollToBottom();
 }
 
 function onModelChange() {

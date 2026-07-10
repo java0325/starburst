@@ -119,6 +119,11 @@ _SYSTEM_BASE = """\
 ## 규칙
 - 사용자가 분석을 요청하면 항상 run_analysis 도구를 사용하세요
 - 분석 결과를 받은 후 핵심 인사이트를 한국어로 명확하게 설명하세요
+- 고급 시각화(SV1·SV2·SV3) 분석 후에는 반드시 다음 구조로 인사이트를 제공하세요:
+  1. **분석 개요** — 시각화가 보여주는 핵심 내용 1~2문장 요약
+  2. **주요 발견** — 수치·패턴·핫스팟 등 3~5개 bullet 포인트
+  3. **전술적 시사점** — 군사·방어 전략적 함의 2~3개
+  4. **후속 분석 제안** — 추가로 살펴볼 분석 1~2개 제안
 - 데이터가 없거나 오류 시 원인을 친절하게 안내하세요
 - 숫자는 읽기 쉽게 단위와 함께 설명하세요
 """
@@ -169,7 +174,38 @@ _DOMAIN_SCENARIO = """\
   · order_id, target_corps(1/5/7군단·수도군단), readiness_level(진돗개하나·경계태세강화), issue_time
 - nk_drone_tracks: 북한 드론 비행 궤적 Iceberg Parquet — 5,000,000건
 - artillery_fire_logs: 한국군 대응 포격 기록 Iceberg Parquet — 10,000,000건
-분석 스키마: postgresql.military_scenario (Trino), iceberg.telemetry_scenario (Trino)"""
+분석 스키마: postgresql.military_scenario (Trino), iceberg.telemetry_scenario (Trino)
+
+## 고급 시각화 분석 (SV1·SV2·SV3) — 인터랙티브 HTML 차트
+사용자가 SV1/SV2/SV3 분석을 요청하면 run_analysis 도구를 실행한 뒤, 아래 컨텍스트를 바탕으로 반드시 풍부한 한국어 인사이트를 제공하세요.
+
+### SV1 — 서해안→중부전선 병력 이동 흐름도 (Sankey Diagram)
+- 시각화: 북한 집결지(원산·개성·통천·해주) → DMZ 통과 구역 → 자산 유형 → 아군 군단 방어구역 4계층 흐름
+- 주요 데이터 (탐지 유입량 기준):
+  · 최대 유입 경로: 개성→DMZ서부→보병기갑이동→1군단 (4,800건 → 3,500건)
+  · 드론/무인기: 서부(2,200)+중부(1,200)+동부(900) = 4,300건, 1·5군단에 집중
+  · 포병 위협: 동부·중부 전선 경유 5·7군단 방면 분산
+- 분석 포인트: 개성 전방기지의 서부전선 집중 압박, 드론 침투의 다전선 동시 분산, 1군단 방어 부담 집중
+
+### SV2 — 무인기 침투 밀도 및 포격 도발 원점 분석 (GIS KDE Heatmap)
+- 시각화: 한반도 WGS-84 좌표계 기반 드론 침투 밀도 KDE 히트맵 + 아군 타격 좌표(×) 오버레이
+- 주요 핫스팟 (Gaussian KDE 고밀도 클러스터):
+  · 포천 일대 (127.2°E, 38.08°N): 210건 → 최고 밀도 (레드존)
+  · 철원 일대 (127.32°E, 38.25°N): 155건 → 주요 침투 루트
+  · 강화도 남서 (126.5°E, 37.72°N): 190건 → 서해안 침투 거점
+  · 연천 (126.95°E, 37.94°N): 85건, 고성 (128.55°E, 38.32°N): 65건
+- 아군 대응: 포천·철원 축선 12개 좌표에 도발 원점 타격 성공
+- 분석 포인트: DMZ 중부 포천-철원 회랑이 주요 취약 구간, 서해안 강화 방면 동시 위협, 레이더 탐지 반경 내 타격 효율
+
+### SV3 — 무인기 센서 데이터 통계적 이상 징후 탐지 (Time-Series Anomaly)
+- 시각화: 48시간 10분 간격(N=288) 드론 엔진 온도 실측 + MA(24) 이동평균 + ±2.5σ Z-Score 신뢰구간 + 이상 탐지 마커
+- 탐지된 이상 징후 (4건):
+  · 08:00 — 엔진 과열 (+43°C 급등): 경고 발령
+  · 16:00 — 긴급 이상기동 (+60°C): 방해전파 사격 성공
+  · 27:00 — 드론 추락 (-72°C 급락): 격추 확인
+  · 36:00 — 2호기 이상 (+50°C): 방해전파 사격 성공
+- 알고리즘: 슬라이딩 윈도우 MA(24) 기준선 추정 → 잔차의 표준편차 σ 산출 → Z-Score > 2.5 구간 이상 마킹
+- 분석 포인트: 초기 과열→이상기동→격추 3단계 패턴, 방해전파 사격의 2.5σ 초과 즉시 대응 효과, 36시간 이후 재발 패턴"""
 
 
 class TrinoLLMAgent:
@@ -419,6 +455,16 @@ class TrinoLLMAgent:
                     analysis = self._match_analysis(hint)
             if not analysis:
                 return {"tool": "run_analysis", "error": f"분석 ID '{aid}'를 찾을 수 없습니다."}
+            # HTML 시각화 분석 — SQL 없이 정적 파일 반환
+            if analysis.get("output_type") == "html_viz":
+                return {
+                    "tool": "run_analysis",
+                    "analysis": analysis,
+                    "html_viz": True,
+                    "viz_url": f"/viz/{analysis['viz_file']}",
+                    "columns": [],
+                    "rows": [],
+                }
             sql = self._load_sql(aid, analysis.get("query_index", 0))
             if not sql:
                 return {"tool": "run_analysis", "error": f"SQL 파일 없음: {aid}_*.sql"}
@@ -451,6 +497,47 @@ class TrinoLLMAgent:
         return {"tool": name, "error": f"알 수 없는 도구: {name}"}
 
     # ── 도구 결과 → LLM 요약용 텍스트 ───────────────────────────────────────
+    # SV1/SV2/SV3 시각화 분석 요약 (LLM 인사이트 생성용)
+    _VIZ_SUMMARY = {
+        "SV1": (
+            "[SV1 — 병력 이동 흐름도 (Sankey Diagram) 시각화 완료]\n"
+            "탐지된 북한 자산 유입량 (총 12,500건):\n"
+            "- 개성 전방기지 → DMZ 서부구역: 4,800건 (최대 유입 경로)\n"
+            "- 원산 집결지 → DMZ 중부구역: 3,200건\n"
+            "- 해주 기갑전단 → DMZ 서부구역: 2,600건\n"
+            "- 통천 해안포진지 → DMZ 동부구역: 1,900건\n"
+            "자산 유형 분류:\n"
+            "- 보병·기갑 이동: 5,600건 → 수도군단(2,100), 1군단(3,500)\n"
+            "- 드론·무인기 침투: 4,300건 → 수도군단(1,100), 1군단(1,500), 5군단(1,700)\n"
+            "- 포병 화력 위협: 2,600건 → 1군단(800), 5군단(900), 7군단(900)\n"
+            "군단별 방어 부담: 1군단 최대(5,800건), 5군단(2,600), 수도군단(3,200), 7군단(900)"
+        ),
+        "SV2": (
+            "[SV2 — 무인기 침투 밀도 GIS KDE 히트맵 시각화 완료]\n"
+            "KDE 고밀도 핫스팟 클러스터 (WGS-84 좌표 기준):\n"
+            "- 포천 일대 (127.2°E, 38.08°N): 210건 → 최고밀도 (레드존)\n"
+            "- 강화도 (126.5°E, 37.72°N): 190건 → 서해안 침투 거점\n"
+            "- 철원 (127.32°E, 38.25°N): 155건 → DMZ 중부 취약 축선\n"
+            "- 연천 (126.95°E, 37.94°N): 85건\n"
+            "- 고성 (128.55°E, 38.32°N): 65건 (동해안 분산)\n"
+            "아군 대응: 포천·철원 축선 12개 좌표에 도발 원점 타격 성공 (×표시)\n"
+            "레이더 탐지 반경(파란 점선): 포천·철원 레이더 스테이션 2개소\n"
+            "MDL(군사분계선) 38.0°N 기준 북한 영역 침투 밀도 집중 확인"
+        ),
+        "SV3": (
+            "[SV3 — 무인기 센서 이상 징후 탐지 시계열 시각화 완료]\n"
+            "관측 기간: 48시간 (10분 간격 N=288 포인트) / 기준 온도: 85°C ±2.8°C\n"
+            "MA(24) 이동평균 ± 2.5σ Z-Score 신뢰구간 분석 결과:\n"
+            "이상 탐지 4건:\n"
+            "1. 08:00 — 엔진 온도 +43°C 급등 → 경고 발령 (Z=2.8σ)\n"
+            "2. 16:00 — +60°C 이상기동 → 방해전파 사격 성공 (Z=3.4σ)\n"
+            "3. 27:00 — -72°C 급락 → 드론 격추 확인 (Z=4.1σ)\n"
+            "4. 36:00 — 2호기 +50°C → 방해전파 사격 성공 (Z=3.1σ)\n"
+            "방해전파 사격 대응 시간: 탐지 후 평균 12분 이내\n"
+            "이상 패턴: 과열(+Δ) → 이상기동 → 격추(-Δ) 3단계 반복 사이클 확인"
+        ),
+    }
+
     @staticmethod
     def _summarise_for_llm(result: dict) -> str:
         if result.get("error"):
@@ -460,6 +547,17 @@ class TrinoLLMAgent:
             items = result.get("data", [])
             return "\n".join(
                 f"{a['id']}: {a['name']} — {a['description']}" for a in items
+            )
+        # html_viz 결과 처리 — 사전 정의된 시각화 컨텍스트로 LLM 인사이트 유도
+        if result.get("html_viz"):
+            analysis = result.get("analysis", {})
+            aid = analysis.get("id", "")
+            ctx = TrinoLLMAgent._VIZ_SUMMARY.get(aid)
+            if ctx:
+                return ctx
+            return (
+                f"[{aid} — {analysis.get('name', '고급 시각화')} 시각화 완료]\n"
+                "인터랙티브 HTML 차트가 표시되었습니다. 시스템 프롬프트의 SV 설명을 참조하여 인사이트를 제공하세요."
             )
         rows = result.get("rows", [])
         columns = result.get("columns", [])
@@ -680,19 +778,22 @@ class TrinoLLMAgent:
                 yield {"type": "tool_result", "result": result}
 
                 summary_text = self._summarise_for_llm(result)
+                is_viz = result.get("html_viz", False)
+                viz_prompt = (
+                    f"[{analysis['id']}] 고급 시각화 분석이 완료되었습니다. "
+                    "아래 데이터를 바탕으로 분석 개요, 주요 발견, 전술적 시사점, 후속 분석 제안을 한국어로 설명해주세요:\n"
+                    f"{summary_text}"
+                ) if is_viz else (
+                    f"다음 분석 결과에 대해 핵심 인사이트를 한국어로 자연스럽게 설명해주세요:\n"
+                    f"{summary_text}"
+                )
                 insight_messages = [
                     *full_messages,
                     {
                         "role": "assistant",
                         "content": f"[{analysis['name']}] 분석 데이터를 조회했습니다.",
                     },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"다음 분석 결과에 대해 핵심 인사이트를 한국어로 자연스럽게 설명해주세요:\n"
-                            f"{summary_text}"
-                        ),
-                    },
+                    {"role": "user", "content": viz_prompt},
                 ]
                 for token in self._stream_ollama(insight_messages):
                     yield {"type": "token", "content": token}
@@ -714,19 +815,22 @@ class TrinoLLMAgent:
                 result = self._execute_tool("run_analysis", {"id": aid})
                 yield {"type": "tool_result", "result": result}
                 summary_text = self._summarise_for_llm(result)
+                is_viz = result.get("html_viz", False)
+                viz_prompt = (
+                    f"[{matched['id']}] 고급 시각화 분석이 완료되었습니다. "
+                    "분석 개요, 주요 발견, 전술적 시사점, 후속 분석 제안을 한국어로 설명해주세요:\n"
+                    f"{summary_text}"
+                ) if is_viz else (
+                    f"다음 분석 결과에 대해 핵심 인사이트를 한국어로 자연스럽게 설명해주세요:\n"
+                    f"{summary_text}"
+                )
                 insight_messages = [
                     *full_messages,
                     {
                         "role": "assistant",
                         "content": f"[{matched['name']}] 분석 데이터를 조회했습니다.",
                     },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"다음 분석 결과에 대해 핵심 인사이트를 한국어로 자연스럽게 설명해주세요:\n"
-                            f"{summary_text}"
-                        ),
-                    },
+                    {"role": "user", "content": viz_prompt},
                 ]
                 for token in self._stream_ollama(insight_messages):
                     yield {"type": "token", "content": token}
@@ -769,19 +873,21 @@ class TrinoLLMAgent:
                 fallback_result = self._execute_tool("run_analysis", {"id": aid})
                 yield {"type": "tool_result", "result": fallback_result}
                 fb_summary = self._summarise_for_llm(fallback_result)
+                is_viz_fb = fallback_result.get("html_viz", False)
+                fb_prompt = (
+                    f"[{matched_fallback['id']}] 고급 시각화 분석이 완료되었습니다. "
+                    "분석 개요, 주요 발견, 전술적 시사점, 후속 분석 제안을 한국어로 설명해주세요:\n"
+                    f"{fb_summary}"
+                ) if is_viz_fb else (
+                    f"다음 분석 결과에 대해 핵심 인사이트를 한국어로 설명해주세요:\n{fb_summary}"
+                )
                 fb_insight = [
                     *full_messages,
                     {
                         "role": "assistant",
                         "content": f"[{matched_fallback['name']}] 분석 데이터를 조회했습니다.",
                     },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"다음 분석 결과에 대해 핵심 인사이트를 한국어로 설명해주세요:\n"
-                            f"{fb_summary}"
-                        ),
-                    },
+                    {"role": "user", "content": fb_prompt},
                 ]
                 for token in self._stream_ollama(fb_insight):
                     yield {"type": "token", "content": token}
@@ -792,17 +898,33 @@ class TrinoLLMAgent:
             return
 
         # ── Phase 3: 도구 결과 바탕 스트리밍 인사이트 ─────────────────────
+        # html_viz 분석일 경우 군사 전문 인사이트 프롬프트 사용
+        has_viz = any(r.get("html_viz") for r in tool_results)
+        if has_viz:
+            viz_aid = next(
+                (r.get("analysis", {}).get("id", "") for r in tool_results if r.get("html_viz")), ""
+            )
+            insight_prompt = (
+                f"[{viz_aid}] 고급 시각화 분석이 완료되었습니다. "
+                "위 시각화 데이터를 바탕으로 아래 구조로 한국어 군사 전문 인사이트를 제공해주세요:\n"
+                "1. **분석 개요** — 이 시각화가 보여주는 핵심 내용을 1~2문장으로 요약\n"
+                "2. **주요 발견** — 수치·패턴·핫스팟 등 가장 중요한 발견 사항 3~5개 (bullet)\n"
+                "3. **전술적 시사점** — 이 데이터가 방어 전략에 주는 군사적 함의 2~3개\n"
+                "4. **후속 분석 제안** — 추가로 살펴볼 분석 1~2개를 구체적으로 제안해주세요"
+            )
+        else:
+            insight_prompt = (
+                "도구 실행이 완료되었습니다. "
+                "위 데이터를 바탕으로 핵심 인사이트와 주목할 만한 패턴을 한국어로 설명해주세요. "
+                "숫자는 구체적으로 언급하고, 전술·군사적 의미를 포함해 주세요."
+            )
         analysis_messages = [
             *full_messages,
             result_msg,
             *tool_messages,
             {
                 "role": "user",
-                "content": (
-                    "도구 실행이 완료되었습니다. "
-                    "위 데이터를 바탕으로 핵심 인사이트와 주목할 만한 패턴을 한국어로 설명해주세요. "
-                    "숫자는 구체적으로 언급하고, 비즈니스적 의미를 포함해 주세요."
-                ),
+                "content": insight_prompt,
             },
         ]
 

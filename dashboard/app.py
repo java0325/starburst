@@ -8,7 +8,7 @@ import re
 import time
 
 import requests
-from flask import Flask, Response, jsonify, render_template, request, stream_with_context
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory, stream_with_context
 
 app = Flask(__name__)
 
@@ -19,6 +19,7 @@ _BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 SQL_DIR          = os.path.join(_BASE_DIR, "..", "sql")
 ARMY_SQL_DIR     = os.path.join(_BASE_DIR, "..", "sql", "army")
 SCENARIO_SQL_DIR = os.path.join(_BASE_DIR, "..", "sql", "scenario")
+VIZ_DIR          = os.path.join(_BASE_DIR, "..", "viz")
 
 # ── 분석 목록 정의 ─────────────────────────────────────────────────────────────
 # keywords: 자연어 입력과 매칭할 한국어 키워드 목록
@@ -260,6 +261,48 @@ ANALYSES_ARMY = [
 
 # ── 육군 방어 및 대응전략 시뮬레이션 분석 목록 ────────────────────────────────
 ANALYSES_SCENARIO = [
+    {
+        "id": "SV1",
+        "name": "병력 이동 흐름도 (Sankey)",
+        "keywords": [
+            "sankey", "생키", "흐름도", "병력 이동", "이동 흐름", "군병력", "유입량",
+            "서해안", "중부전선", "병력 흐름", "이동 경로", "장비 이동",
+        ],
+        "description": "서해안→중부전선 군병력·장비 이동 경로를 4계층 생키 다이어그램으로 시각화합니다.",
+        "output_type": "html_viz",
+        "viz_file": "SV1_sankey.html",
+        "chart_type": None,
+        "catalog": "postgresql",
+        "schema": "military_scenario",
+    },
+    {
+        "id": "SV2",
+        "name": "무인기 침투 밀도 분석 (GIS 히트맵)",
+        "keywords": [
+            "heatmap", "히트맵", "침투 밀도", "무인기 밀도", "gis", "지도", "좌표",
+            "핫스팟", "kde", "커널 밀도", "도발 원점", "강화", "포천", "철원",
+        ],
+        "description": "무인기 침투 밀도를 GIS 커널 밀도 추정(KDE) 히트맵으로, 도발 원점 타격 좌표를 교차 플롯팅합니다.",
+        "output_type": "html_viz",
+        "viz_file": "SV2_heatmap.html",
+        "chart_type": None,
+        "catalog": "postgresql",
+        "schema": "military_scenario",
+    },
+    {
+        "id": "SV3",
+        "name": "센서 이상 징후 탐지 (시계열 Anomaly)",
+        "keywords": [
+            "anomaly", "이상 징후", "센서", "이상 탐지", "시계열", "이동평균",
+            "z-score", "zscore", "신뢰구간", "엔진 온도", "드론 센서", "방해전파",
+        ],
+        "description": "무인기 엔진 센서 시계열에 MA(24)·Z-Score 2.5σ 기반 이상치 탐지 및 방해전파 사격 시점을 시각화합니다.",
+        "output_type": "html_viz",
+        "viz_file": "SV3_anomaly.html",
+        "chart_type": None,
+        "catalog": "postgresql",
+        "schema": "military_scenario",
+    },
     {
         "id": "STI",
         "name": "전체 테이블 정보",
@@ -736,6 +779,24 @@ def analyze():
             ),
         })
 
+    # HTML 시각화 분석 — SQL 없이 정적 HTML 파일 제공
+    if analysis.get("output_type") == "html_viz":
+        viz_file = analysis.get("viz_file", "")
+        viz_path = os.path.join(VIZ_DIR, viz_file)
+        if not os.path.isfile(viz_path):
+            return jsonify({"error": f"시각화 파일을 찾을 수 없습니다: {viz_file}"}), 500
+        return jsonify({
+            "type": "html_viz",
+            "viz_url": f"/viz/{viz_file}",
+            "analysis": {
+                "id": analysis["id"],
+                "name": analysis["name"],
+                "description": analysis["description"],
+            },
+            "workspace": ws_id,
+            "matched_by": matched_by,
+        })
+
     # SQL 로드
     sql = load_sql_query(analysis["id"], analysis.get("query_index", 0), sql_dir=sql_dir)
     if not sql:
@@ -765,6 +826,12 @@ def analyze():
         "rows": rows or [],
         "chart": chart,
     })
+
+
+@app.route("/viz/<path:filename>")
+def serve_viz(filename):
+    """독립형 시각화 HTML 파일 제공."""
+    return send_from_directory(os.path.abspath(VIZ_DIR), filename)
 
 
 @app.route("/api/health")
