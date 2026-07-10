@@ -554,7 +554,7 @@ const WS_META = {
       { icon: '🏪', title: '채널별 매출 비교',      sub: '매장·카탈로그·웹 채널 비교',      query: '채널별 매출을 비교해줘' },
       { icon: '📋', title: '전체 테이블 정보',      sub: '24개 테이블 구조·건수 요약',      query: '전체 테이블 정보를 보여줘' },
       { icon: '💎', title: 'CLV 분석',             sub: '고객 생애 가치 TOP 10',           query: '고객 생애 가치(CLV) TOP 10을 분석해줘' },
-      { icon: '🔍', title: '직접 SQL 조회',         sub: '자연어로 SQL 쿼리 실행',          query: 'store_sales 테이블에서 상위 5개 매장의 총매출을 조회해줘' },
+      { icon: '🔍', title: '직접 SQL 조회',         sub: '매장별 총매출 TOP 5 직접 조회',    query: 'store_sales와 store를 조인해서 s_store_name 기준으로 ss_net_paid 합계 상위 5개 매장을 보여줘' },
     ],
   },
   army: {

@@ -125,11 +125,33 @@ _SYSTEM_BASE = """\
 
 _DOMAIN_TPCDS = """\
 ## 주요 데이터베이스 테이블 (catalog=tpcds, schema=sf1)
-- customer: 고객 정보 (인구통계, 주소 등)
-- store_sales / web_sales / catalog_sales: 채널별 판매 데이터
-- item: 상품 정보 (카테고리, 브랜드, 가격 등)
-- store: 매장 정보 / date_dim: 날짜 차원
-- inventory: 재고 / promotion: 프로모션 정보"""
+SQL 작성 시 반드시 아래 실제 컬럼명을 사용하세요. 존재하지 않는 컬럼(store_id 등)은 절대 사용 금지.
+
+- store_sales: ss_sold_date_sk, ss_item_sk, ss_customer_sk, ss_store_sk,
+    ss_promo_sk, ss_ticket_number, ss_quantity, ss_wholesale_cost,
+    ss_list_price, ss_sales_price, ss_ext_sales_price, ss_net_paid,
+    ss_net_paid_inc_tax, ss_net_profit
+- store: s_store_sk, s_store_id, s_store_name, s_number_employees,
+    s_floor_space, s_city, s_state, s_manager, s_market_id
+- customer: c_customer_sk, c_customer_id, c_first_name, c_last_name,
+    c_birth_year, c_email_address, c_preferred_cust_flag
+- item: i_item_sk, i_item_id, i_item_desc, i_current_price, i_wholesale_cost,
+    i_brand, i_brand_id, i_class, i_category, i_product_name
+- date_dim: d_date_sk, d_date, d_year, d_moy (월), d_qoy (분기),
+    d_day_name, d_weekend, d_holiday
+- web_sales: ws_sold_date_sk, ws_item_sk, ws_bill_customer_sk,
+    ws_web_site_sk, ws_quantity, ws_sales_price, ws_net_paid, ws_net_profit
+- catalog_sales: cs_sold_date_sk, cs_item_sk, cs_bill_customer_sk,
+    cs_quantity, cs_sales_price, cs_net_paid, cs_net_profit
+- inventory: inv_date_sk, inv_item_sk, inv_warehouse_sk, inv_quantity_on_hand
+- promotion: p_promo_sk, p_promo_name, p_channel_tv, p_channel_radio,
+    p_start_date_sk, p_end_date_sk, p_cost
+
+## 자주 쓰는 JOIN 패턴
+- 매장별 매출: store_sales ss JOIN store s ON ss.ss_store_sk = s.s_store_sk
+- 날짜 필터: JOIN date_dim d ON ss.ss_sold_date_sk = d.d_date_sk
+- 상품별 매출: JOIN item i ON ss.ss_item_sk = i.i_item_sk
+- 고객별 매출: JOIN customer c ON ss.ss_customer_sk = c.c_customer_sk"""
 
 _DOMAIN_ARMY = """\
 ## 주요 데이터 도메인 (육군 국방데이터 온톨로지)
