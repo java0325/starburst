@@ -6,6 +6,8 @@
   <title>Trino TPC-DS 분석 대시보드</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12/dist/d3-sankey.min.js"></script>
   <style>
     :root { color-scheme: dark; }
     body { background: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', system-ui, sans-serif; }
@@ -38,6 +40,12 @@
     }
     .ct-btn:hover { background: #1e293b; color: #e2e8f0; border-color: #475569; }
     .ct-btn.ct-active { background: #312e81; border-color: #6366f1; color: #a5b4fc; font-weight: 600; }
+    .ct-btn[data-type="sankey"],
+    .ct-btn[data-type="heatmap"],
+    .ct-btn[data-type="parallel"] { border-color: rgba(34,211,238,.3); color: #22d3ee; }
+    .ct-btn[data-type="sankey"].ct-active,
+    .ct-btn[data-type="heatmap"].ct-active,
+    .ct-btn[data-type="parallel"].ct-active { background: rgba(34,211,238,.15); border-color: #22d3ee; color: #22d3ee; }
     /* ── 워크스페이스 선택 버튼 ── */
     .ws-btn {
       flex: 1; padding: 7px 6px; border-radius: 7px; font-size: 11px; cursor: pointer;
@@ -276,7 +284,11 @@
     { key: 'area',       label: '🌊 영역' },
     { key: 'pie',        label: '🥧 파이' },
     { key: 'scatter',    label: '⬤ 산점도' },
+    { key: 'sankey',     label: '🔗 생키',     adv: true },
+    { key: 'heatmap',    label: '🌡 밀도맵',   adv: true },
+    { key: 'parallel',   label: '📐 평행좌표', adv: true },
   ];
+  const ADV_TYPES = new Set(['sankey','heatmap','parallel']);
 
   function detectInitType(chartData) {
     if (!chartData?.data?.[0]) return 'bar';
@@ -339,12 +351,218 @@
     const s = _chartStore[chartId];
     if (!s) return;
     s.current = newType;
-    const trace = _buildTrace(newType, s.x, s.y);
-    const layout = _buildLayout(newType, s.x.length);
-    Plotly.react(chartId, [trace], layout, { responsive: true, displayModeBar: true,
-      modeBarButtonsToRemove: ['sendDataToCloud'] });
     document.querySelectorAll(`[data-cid="${chartId}"]`).forEach(b =>
       b.classList.toggle('ct-active', b.dataset.type === newType));
+
+    const el = document.getElementById(chartId);
+    if (!el) return;
+
+    if (ADV_TYPES.has(newType)) {
+      renderAdvancedChart(newType, el, s.columns || [], s.rows || []);
+      return;
+    }
+    // 기본 타입으로 돌아올 때 Plotly 재렌더
+    el.innerHTML = '';
+    const trace = _buildTrace(newType, s.x, s.y);
+    const layout = _buildLayout(newType, s.x.length);
+    Plotly.newPlot(chartId, [trace], layout, { responsive: true, displayModeBar: true,
+      modeBarButtonsToRemove: ['sendDataToCloud'] });
+  }
+
+  /* ── 고급 시각화 렌더러 ─────────────────────────────────────────── */
+  function renderAdvancedChart(type, el, columns, rows) {
+    if (typeof Plotly !== 'undefined') try { Plotly.purge(el.id); } catch(e) {}
+    el.innerHTML = '';
+    el.style.cssText += ';background:#0a1628;border-radius:8px;overflow:hidden';
+    if (!rows || rows.length === 0) {
+      el.innerHTML = '<p style="color:#64748b;text-align:center;padding:24px;font-size:13px">데이터가 없어 고급 시각화를 렌더링할 수 없습니다.</p>';
+      return;
+    }
+    if (type === 'sankey')  _advSankey(el, columns, rows);
+    if (type === 'heatmap') _advHeatmap(el, columns, rows);
+    if (type === 'parallel') _advParallel(el, columns, rows);
+  }
+
+  /* ── Sankey ─────────────────────────────────────────────────────── */
+  function _advSankey(el, columns, rows) {
+    if (!window.d3 || !d3.sankey) {
+      el.innerHTML = '<p style="color:#f97316;text-align:center;padding:20px">d3-sankey 라이브러리 로드 중... 잠시 후 다시 시도해 주세요.</p>'; return;
+    }
+    const W = el.clientWidth || 600, H = el.clientHeight || 320;
+    // col 타입 감지: 문자열 col → source/target, 숫자 col → value
+    const colMeta = columns.map((c, i) => ({
+      i, name: c,
+      isNum: rows.filter(r => r[i] !== null && r[i] !== '').every(r => !isNaN(Number(r[i]))),
+    }));
+    const strIdx = colMeta.filter(c => !c.isNum).map(c => c.i);
+    const numIdx = colMeta.filter(c => c.isNum).map(c => c.i);
+    if (strIdx.length < 2 || numIdx.length < 1) {
+      el.innerHTML = '<p style="color:#64748b;text-align:center;padding:20px;font-size:12px">생키 다이어그램은 [출발지, 도착지, 값] 형태의 컬럼이 필요합니다.<br/>(예: 카테고리A, 카테고리B, 건수)</p>'; return;
+    }
+    const [si, ti, vi] = [strIdx[0], strIdx[1], numIdx[0]];
+    const nodeSet = new Set(); rows.forEach(r => { nodeSet.add(String(r[si])); nodeSet.add(String(r[ti])); });
+    const nodeList = [...nodeSet];
+    const nodeMap = new Map(nodeList.map((n, i) => [n, i]));
+    const nodes = nodeList.map(name => ({ name }));
+    const links = rows.map(r => ({
+      source: nodeMap.get(String(r[si])), target: nodeMap.get(String(r[ti])),
+      value: Math.max(0.01, Number(r[vi]) || 1),
+    })).filter(l => l.source !== undefined && l.target !== undefined && l.source !== l.target);
+
+    const COLORS = ['#22d3ee','#10b981','#8b5cf6','#f97316','#ef4444','#eab308','#06b6d4','#84cc16'];
+    const svg = d3.select(el).append('svg').attr('width', W).attr('height', H);
+    const mg = { t:12, r:110, b:12, l:110 };
+    const g = svg.append('g').attr('transform', `translate(${mg.l},${mg.t})`);
+    const layout = d3.sankey().nodeWidth(18).nodePadding(10)
+      .extent([[0,0],[W-mg.l-mg.r, H-mg.t-mg.b]])
+      ({ nodes: nodes.map(d=>({...d})), links: links.map(d=>({...d})) });
+    g.append('g').selectAll('path').data(layout.links).join('path')
+      .attr('d', d3.sankeyLinkHorizontal()).attr('fill','none')
+      .attr('stroke', d => COLORS[d.source.index % COLORS.length])
+      .attr('stroke-width', d => Math.max(1, d.width)).attr('opacity', .32);
+    const ng = g.append('g').selectAll('g').data(layout.nodes).join('g');
+    ng.append('rect')
+      .attr('x', d=>d.x0).attr('y', d=>d.y0)
+      .attr('width', d=>d.x1-d.x0).attr('height', d=>Math.max(2, d.y1-d.y0))
+      .attr('fill', (_,i) => COLORS[i % COLORS.length]).attr('rx', 3);
+    ng.append('text')
+      .attr('x', d=>d.x0<(W-mg.l-mg.r)/2 ? d.x1+6 : d.x0-6)
+      .attr('y', d=>(d.y0+d.y1)/2).attr('dy','0.35em')
+      .attr('text-anchor', d=>d.x0<(W-mg.l-mg.r)/2 ? 'start' : 'end')
+      .attr('fill','#cbd5e1').attr('font-size',10).attr('font-family','sans-serif')
+      .text(d => `${d.name} (${(d.value||0).toLocaleString()})`);
+  }
+
+  /* ── Matrix Heatmap ─────────────────────────────────────────────── */
+  function _advHeatmap(el, columns, rows) {
+    const W = el.clientWidth || 600, H = el.clientHeight || 320;
+    const canvas = Object.assign(document.createElement('canvas'), { width: W, height: H });
+    canvas.style.cssText = 'display:block;width:100%;height:100%';
+    el.appendChild(canvas);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#0a1628'; ctx.fillRect(0,0,W,H);
+
+    const mg = { t:40, r:16, b:16, l:90 };
+    const dispR = Math.min(rows.length, 40);
+    const cW = (W-mg.l-mg.r)/columns.length, cH = (H-mg.t-mg.b)/dispR;
+
+    // 수치 범위
+    const nums = rows.flatMap(r=>r.map(v=>Number(v)).filter(v=>!isNaN(v)));
+    const [minV, maxV] = [Math.min(...nums)||0, Math.max(...nums)||1];
+    const norm = v => (v-minV)/(maxV-minV||1);
+    const heat = t => {
+      const stops = [[0,[8,20,110]],[.3,[0,80,240]],[.55,[0,200,160]],[.75,[220,220,0]],[1,[255,30,0]]];
+      for (let i=0;i<stops.length-1;i++) {
+        const [t0,c0]=stops[i],[t1,c1]=stops[i+1];
+        if (t>=t0&&t<=t1) { const f=(t-t0)/(t1-t0); return c0.map((v,j)=>Math.round(v+f*(c1[j]-v))); }
+      } return [255,0,0];
+    };
+
+    rows.slice(0, dispR).forEach((row, ri) => {
+      columns.forEach((col, ci) => {
+        const v = Number(row[ci]), t = isNaN(v) ? 0 : norm(v);
+        const [r,g,b] = heat(t);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(mg.l+ci*cW+1, mg.t+ri*cH+1, cW-2, cH-2);
+        if (cW>28&&cH>12&&!isNaN(v)) {
+          ctx.fillStyle = t>.55?'rgba(0,0,0,.8)':'rgba(255,255,255,.85)';
+          ctx.font = `${Math.min(9,cH-3)}px monospace`; ctx.textAlign='center';
+          ctx.fillText(v%1===0?v:v.toFixed(1), mg.l+ci*cW+cW/2, mg.t+ri*cH+cH/2+3);
+        }
+      });
+      // 행 레이블
+      ctx.fillStyle='#64748b'; ctx.font='9px monospace'; ctx.textAlign='right';
+      ctx.fillText(String(row[0]).slice(0,10), mg.l-5, mg.t+ri*cH+cH/2+3);
+    });
+    // 열 헤더
+    columns.forEach((col, ci) => {
+      ctx.save(); ctx.translate(mg.l+ci*cW+cW/2, mg.t-6);
+      ctx.rotate(-Math.PI/5); ctx.fillStyle='#94a3b8'; ctx.font='9px monospace'; ctx.textAlign='left';
+      ctx.fillText(col.slice(0,12), 0, 0); ctx.restore();
+    });
+    // 범례
+    const lx=mg.l, ly=H-10, lw=Math.min(200,W/3);
+    const grad=ctx.createLinearGradient(lx,0,lx+lw,0);
+    grad.addColorStop(0,'rgb(8,20,110)'); grad.addColorStop(.5,'rgb(0,200,160)'); grad.addColorStop(1,'rgb(255,30,0)');
+    ctx.fillStyle=grad; ctx.fillRect(lx,ly-10,lw,8);
+    ctx.fillStyle='#475569'; ctx.font='8px monospace'; ctx.textAlign='left';
+    ctx.fillText(minV.toFixed(0),lx,ly+6); ctx.textAlign='right';
+    ctx.fillText(maxV.toFixed(0),lx+lw,ly+6);
+  }
+
+  /* ── Parallel Coordinates ────────────────────────────────────────── */
+  function _advParallel(el, columns, rows) {
+    if (!window.d3) { el.innerHTML='<p style="color:#f97316;text-align:center;padding:20px">D3 로드 중...</p>'; return; }
+    const W = el.clientWidth||600, H = el.clientHeight||320;
+    const colMeta = columns.map((c,i)=>({ i, name:c, isNum: rows.filter(r=>r[i]!==null&&r[i]!=='').every(r=>!isNaN(Number(r[i]))) }));
+    const numDims = colMeta.filter(c=>c.isNum);
+    const catCol  = colMeta.find(c=>!c.isNum);
+    if (numDims.length < 2) {
+      el.innerHTML='<p style="color:#64748b;text-align:center;padding:20px;font-size:12px">평행좌표는 수치형 컬럼 2개 이상이 필요합니다.</p>'; return;
+    }
+    const data = rows.slice(0,300).map(r=>({
+      ...Object.fromEntries(numDims.map(d=>[d.name, Number(r[d.i])])),
+      _cat: catCol ? String(r[catCol.i]) : '데이터',
+    }));
+    const cats = [...new Set(data.map(d=>d._cat))];
+    const COLORS = ['#22d3ee','#10b981','#ef4444','#f97316','#8b5cf6','#eab308'];
+    const colorOf = d => COLORS[cats.indexOf(d._cat) % COLORS.length];
+    const dims = numDims.map(d=>d.name);
+    const mg = { t:36, r:20, b:28, l:20 };
+    const iW = W-mg.l-mg.r, iH = H-mg.t-mg.b;
+    const xSc = d3.scalePoint().domain(dims).range([0,iW]).padding(.1);
+    const ySc = {};
+    dims.forEach(d=>{ ySc[d]=d3.scaleLinear().domain(d3.extent(data,v=>v[d])).range([iH,0]).nice(); });
+    const pathFn = row => d3.line()(dims.map(d=>[xSc(d), ySc[d](row[d])]));
+
+    d3.select(el).selectAll('*').remove();
+    const svg = d3.select(el).append('svg').attr('width',W).attr('height',H);
+    const g = svg.append('g').attr('transform',`translate(${mg.l},${mg.t})`);
+    // BG lines
+    g.append('g').selectAll('path').data(data).join('path').attr('d',pathFn)
+      .attr('fill','none').attr('stroke',colorOf).attr('stroke-width',.9).attr('opacity',.15);
+    // FG lines
+    const fg = g.append('g').selectAll('path').data(data).join('path').attr('d',pathFn)
+      .attr('fill','none').attr('stroke',colorOf).attr('stroke-width',1.4).attr('opacity',.5);
+
+    const active = {};
+    function update() {
+      const hasF = Object.keys(active).length>0;
+      fg.attr('opacity', d => {
+        if(!hasF) return .5;
+        const pass = Object.entries(active).every(([dim,[lo,hi]])=>d[dim]>=lo&&d[dim]<=hi);
+        return pass?.75:.04;
+      }).attr('stroke-width', d=>{
+        if(!hasF) return 1.4;
+        const pass = Object.entries(active).every(([dim,[lo,hi]])=>d[dim]>=lo&&d[dim]<=hi);
+        return pass?2:.6;
+      });
+    }
+    // Axes + brushes
+    dims.forEach(dim=>{
+      const ag=g.append('g').attr('transform',`translate(${xSc(dim)},0)`);
+      ag.call(d3.axisLeft(ySc[dim]).ticks(5))
+        .selectAll('text').attr('fill','#64748b').attr('font-size',8.5).attr('font-family','monospace');
+      ag.selectAll('line,path').attr('stroke','#1e3a5f');
+      ag.append('text').attr('y',-14).attr('text-anchor','middle')
+        .attr('fill','#cbd5e1').attr('font-size',10).attr('font-family','sans-serif').attr('font-weight',600)
+        .text(dim.length>7?dim.slice(0,7)+'…':dim);
+      const br=d3.brushY().extent([[-12,0],[12,iH]])
+        .on('brush end',function(ev){
+          if(ev.selection){ const[p2,p1]=ev.selection; active[dim]=[ySc[dim].invert(p2),ySc[dim].invert(p1)].sort((a,b)=>a-b); }
+          else delete active[dim];
+          update();
+        });
+      ag.append('g').attr('class','brush').call(br)
+        .selectAll('.selection').attr('fill','rgba(34,211,238,.18)').attr('stroke','#22d3ee');
+    });
+    // 범례
+    const legG = svg.append('g').attr('transform',`translate(${mg.l+4},${H-14})`);
+    cats.slice(0,6).forEach((cat,i)=>{
+      const x=i*90;
+      legG.append('circle').attr('cx',x+6).attr('cy',0).attr('r',4).attr('fill',COLORS[i%COLORS.length]);
+      legG.append('text').attr('x',x+14).attr('y',4).attr('fill','#64748b').attr('font-size',9).text(cat);
+    });
   }
 
   function replaceWithResult(loadingId, result) {
@@ -482,7 +700,7 @@
         const trace0 = result.chart.data[0] || {};
         const xVals = trace0.x || trace0.labels || [];
         const yVals = trace0.y || trace0.values || [];
-        _chartStore[chartId] = { x: xVals, y: yVals, current: initType };
+        _chartStore[chartId] = { x: xVals, y: yVals, current: initType, columns, rows };
         Plotly.newPlot(chartId, result.chart.data, result.chart.layout, {
           responsive: true, displayModeBar: true,
           modeBarButtonsToRemove: ['sendDataToCloud'],
