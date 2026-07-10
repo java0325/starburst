@@ -844,6 +844,163 @@ def health():
         return jsonify({"trino": "error", "message": str(e)}), 503
 
 
+def _trino_query_sync(sql, timeout=60):
+    """단순 동기 Trino 쿼리. (rows, error) 반환."""
+    try:
+        r = requests.post(
+            f"{TRINO_URL}/v1/statement",
+            headers={"X-Trino-User": "admin", "Content-Type": "text/plain; charset=utf-8"},
+            data=sql.encode("utf-8"),
+            timeout=10,
+        )
+        resp = r.json()
+        if resp.get("error"):
+            return None, resp["error"]["message"]
+        rows = list(resp.get("data", []))
+        next_url = resp.get("nextUri")
+        for _ in range(timeout):
+            if not next_url:
+                break
+            import time as _time; _time.sleep(0.4)
+            r2 = requests.get(next_url, headers={"X-Trino-User": "admin"}, timeout=10)
+            d = r2.json()
+            rows += d.get("data", [])
+            next_url = d.get("nextUri")
+            if d.get("error"):
+                return rows, d["error"]["message"]
+        return rows, None
+    except Exception as exc:
+        return None, str(exc)
+
+
+@app.route("/api/data-catalog")
+def data_catalog():
+    """플랫폼 전체 데이터 현황 — 실제 Trino에서 카탈로그·테이블·건수·컬럼수 조회."""
+    import concurrent.futures, time as _time
+
+    result = {
+        "workspaces": [],
+        "total_rows": 0,
+        "total_tables": 0,
+        "generated_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+    # ── 1. TPC-DS sf1 ─────────────────────────────────────────────
+    tpcds_sql = open(os.path.join(SQL_DIR, "00_schema_overview.sql"), encoding="utf-8").read()
+    tpcds_sql = tpcds_sql.split(";")[0].strip()  # 첫 번째 쿼리만
+    tpcds_rows, tpcds_err = _trino_query_sync(tpcds_sql)
+    tpcds_tables = []
+    if tpcds_rows:
+        for row in tpcds_rows:
+            tpcds_tables.append({
+                "table_kr":  row[0],
+                "table_en":  row[1],
+                "desc":      row[2],
+                "row_count": int(row[3]) if row[3] is not None else 0,
+                "col_count": int(row[4]) if row[4] is not None else 0,
+                "status":    "active",
+            })
+    result["workspaces"].append({
+        "id":       "tpcds",
+        "name":     "TPC-DS sf1",
+        "catalog":  "tpcds",
+        "schema":   "sf1",
+        "icon":     "🛒",
+        "tables":   tpcds_tables,
+        "error":    tpcds_err,
+        "total_rows":   sum(t["row_count"] for t in tpcds_tables),
+        "total_tables": len(tpcds_tables),
+    })
+
+    # ── 2. PostgreSQL military_scenario ──────────────────────────
+    pg_tables_info = [
+        ("north_korea_movements", "북한군 동향 탐지",    "북한 자산유형·구역·좌표·탐지시간 기록"),
+        ("defense_orders",        "방어 명령 이력",       "군단별 경계태세·명령유형·대응강도 기록"),
+        ("provocation_events",    "도발 이벤트 로그",     "도발 유형·심각도·위치·확인 여부"),
+        ("response_log",          "대응 행동 로그",       "대응 부대·응답시간·대응 결과"),
+    ]
+    pg_tables = []
+    for tbl_en, tbl_kr, desc in pg_tables_info:
+        # 컬럼 수
+        col_sql = (
+            f"SELECT COUNT(*) FROM postgresql.information_schema.columns "
+            f"WHERE table_schema='military_scenario' AND table_name='{tbl_en}'"
+        )
+        col_rows, _ = _trino_query_sync(col_sql)
+        col_count = int(col_rows[0][0]) if col_rows else 0
+
+        if col_count == 0:
+            # 테이블 미생성
+            pg_tables.append({
+                "table_kr":  tbl_kr, "table_en": tbl_en, "desc": desc,
+                "row_count": 0, "col_count": 0, "status": "not_created",
+            })
+            continue
+
+        cnt_rows, cnt_err = _trino_query_sync(
+            f"SELECT COUNT(*) FROM postgresql.military_scenario.{tbl_en}"
+        )
+        cnt = int(cnt_rows[0][0]) if cnt_rows else 0
+        pg_tables.append({
+            "table_kr":  tbl_kr, "table_en": tbl_en, "desc": desc,
+            "row_count": cnt, "col_count": col_count, "status": "active",
+        })
+
+    result["workspaces"].append({
+        "id":       "scenario_pg",
+        "name":     "PostgreSQL (military_scenario)",
+        "catalog":  "postgresql",
+        "schema":   "military_scenario",
+        "icon":     "🗄",
+        "tables":   pg_tables,
+        "error":    None,
+        "total_rows":   sum(t["row_count"] for t in pg_tables),
+        "total_tables": sum(1 for t in pg_tables if t["status"] == "active"),
+    })
+
+    # ── 3. Iceberg telemetry_scenario ────────────────────────────
+    iceberg_tbl_rows, _ = _trino_query_sync("SHOW TABLES FROM iceberg.telemetry_scenario")
+    existing_iceberg = {r[0] for r in (iceberg_tbl_rows or [])}
+    iceberg_expected = [
+        ("nk_drone_tracks",    "무인기 항적 로그",     "드론 ID·시간·위치·고도·온도 (5M 목표)"),
+        ("artillery_fire_logs","포병 발사 로그",       "포 ID·발사시간·좌표·발사량 (10M 목표)"),
+    ]
+    iceberg_tables = []
+    for tbl_en, tbl_kr, desc in iceberg_expected:
+        if tbl_en not in existing_iceberg:
+            iceberg_tables.append({
+                "table_kr":  tbl_kr, "table_en": tbl_en, "desc": desc,
+                "row_count": 0, "col_count": 0, "status": "not_created",
+            })
+            continue
+        cnt_rows, _ = _trino_query_sync(
+            f"SELECT COUNT(*) FROM iceberg.telemetry_scenario.{tbl_en}"
+        )
+        cnt = int(cnt_rows[0][0]) if cnt_rows else 0
+        iceberg_tables.append({
+            "table_kr": tbl_kr, "table_en": tbl_en, "desc": desc,
+            "row_count": cnt, "col_count": 0, "status": "active",
+        })
+
+    result["workspaces"].append({
+        "id":       "scenario_ice",
+        "name":     "Iceberg (telemetry_scenario)",
+        "catalog":  "iceberg",
+        "schema":   "telemetry_scenario",
+        "icon":     "❄",
+        "tables":   iceberg_tables,
+        "error":    None,
+        "total_rows":   sum(t["row_count"] for t in iceberg_tables),
+        "total_tables": sum(1 for t in iceberg_tables if t["status"] == "active"),
+        "note":     "대용량 Iceberg 테이블은 run-scenario.sh 실행 후 생성됩니다.",
+    })
+
+    # ── 합계 ─────────────────────────────────────────────────────
+    result["total_rows"]   = sum(w["total_rows"]   for w in result["workspaces"])
+    result["total_tables"] = sum(w["total_tables"] for w in result["workspaces"])
+    return jsonify(result)
+
+
 # ── LLM 에이전트 라우트 ────────────────────────────────────────────────────────
 
 def _get_agent():

@@ -59,6 +59,19 @@ else
     echo "  LLM 설치: ./setup-llm.sh"
 fi
 
+# ── 포트 충돌 확인 및 기존 프로세스 종료 ──────────────────────────────────────
+echo ""
+EXISTING_PIDS=$(lsof -ti tcp:"${DASHBOARD_PORT}" 2>/dev/null || true)
+if [[ -n "${EXISTING_PIDS}" ]]; then
+    echo ">>> 포트 ${DASHBOARD_PORT} 이미 사용 중 — 기존 프로세스 종료합니다..."
+    for PID in ${EXISTING_PIDS}; do
+        echo "  종료 PID: ${PID}"
+        kill -TERM "${PID}" 2>/dev/null || kill -KILL "${PID}" 2>/dev/null || true
+    done
+    sleep 2
+    echo "  기존 프로세스 종료 완료"
+fi
+
 # ── 대시보드 실행 ──────────────────────────────────────────────────────────────
 echo ""
 echo ">>> 대시보드 + AI 에이전트 시작"

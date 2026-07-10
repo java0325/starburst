@@ -435,12 +435,20 @@
     </div>
   </div>
 
-  <button class="new-chat-btn" onclick="newChat()">
-    <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-    </svg>
-    새 대화
-  </button>
+  <div style="display:flex;gap:6px;padding:0 2px;margin-bottom:4px">
+    <button class="new-chat-btn" onclick="newChat()" style="flex:1">
+      <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+      </svg>
+      새 대화
+    </button>
+    <button onclick="openDataCatalog()"
+      style="flex:0 0 auto;padding:7px 10px;border-radius:7px;font-size:11px;cursor:pointer;
+             border:1px solid #1e3a5f;background:#0c1a2b;color:#38bdf8;transition:all 0.15s"
+      title="데이터 현황 보기">
+      📊
+    </button>
+  </div>
 
   <div class="conv-list" id="conv-list">
     <!-- JS로 채워짐 -->
@@ -1029,6 +1037,9 @@ function buildToolCard(tc, startOpen = true) {
   const bodyId = `tb-${cardId}`;
   const chartId = `chart-${cardId}`;
 
+  // cols/rows를 함수 스코프로 선언 — setTimeout 클로저에서 접근 가능하도록
+  let cols = [];
+  let rows = [];
   let bodyHtml = '';
 
   if (hasError) {
@@ -1061,8 +1072,8 @@ function buildToolCard(tc, startOpen = true) {
         <a href="${esc(result.viz_url)}" target="_blank" style="color:#38bdf8">${esc(result.viz_url)}</a>
       </p>`;
   } else {
-    const cols  = result.columns || [];
-    const rows  = result.rows || [];
+    cols = result.columns || [];
+    rows = result.rows || [];
     const sql   = result.sql || '';
     const chart = result.chart;
 
@@ -1119,9 +1130,16 @@ function buildToolCard(tc, startOpen = true) {
   `;
 
   // 차트 렌더링 + 스토어 초기화 (DOM 추가 후)
+  // tool-body가 display:none 상태일 수 있으므로 open 클래스 강제 적용 후 렌더링
   setTimeout(() => {
     const chart = result.chart;
-    if (chart && document.getElementById(chartId)) {
+    const chartEl = document.getElementById(chartId);
+    if (chart && chartEl) {
+      // 부모 tool-body가 닫혀 있으면 잠시 열어서 Plotly가 크기를 계산할 수 있게 함
+      const bodyEl = document.getElementById(bodyId);
+      const wasHidden = bodyEl && !bodyEl.classList.contains('open');
+      if (wasHidden && bodyEl) bodyEl.classList.add('open');
+
       const trace0 = chart.data[0] || {};
       const xVals  = trace0.x || trace0.labels || [];
       const yVals  = trace0.y || trace0.values || [];
@@ -1130,14 +1148,27 @@ function buildToolCard(tc, startOpen = true) {
         responsive: true, displayModeBar: true,
         modeBarButtonsToRemove: ['sendDataToCloud'],
       });
+
+      // 원래 닫혀 있던 경우 다시 닫기
+      if (wasHidden && bodyEl) bodyEl.classList.remove('open');
     }
-  }, 50);
+  }, 100);
 
   return div;
 }
 
 function toggleToolBody(id) {
-  document.getElementById(id)?.classList.toggle('open');
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.toggle('open');
+  // 열릴 때 Plotly 차트 크기 재계산
+  if (el.classList.contains('open')) {
+    el.querySelectorAll('.result-chart').forEach(chartEl => {
+      if (chartEl.id && typeof Plotly !== 'undefined') {
+        try { Plotly.Plots.resize(chartEl); } catch(e) {}
+      }
+    });
+  }
 }
 
 // ════════════════════════════════════════════════════════
@@ -1488,9 +1519,178 @@ function esc(str) {
 // ════════════════════════════════════════════════════════
 //  초기화
 // ════════════════════════════════════════════════════════
-renderWelcomeScreen(state.workspace);   // 초기 워크스페이스(tpcds) 예시 카드 렌더링
+renderWelcomeScreen(state.workspace);
 renderConvList();
 document.getElementById('user-input').focus();
+
+// ════════════════════════════════════════════════════════
+//  데이터 현황 모달
+// ════════════════════════════════════════════════════════
+let _catalogLoaded = false;
+
+function openDataCatalog() {
+  let modal = document.getElementById('agent-catalog-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'agent-catalog-modal';
+    modal.style.cssText =
+      'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;' +
+      'padding:16px;background:rgba(0,0,0,0.75)';
+    modal.innerHTML = `
+      <div style="background:#111827;border:1px solid #374151;border-radius:16px;width:100%;max-width:900px;
+                  max-height:88vh;display:flex;flex-direction:column;box-shadow:0 25px 50px rgba(0,0,0,0.5)">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #374151">
+          <div>
+            <div style="color:#f1f5f9;font-weight:600;font-size:14px">📊 플랫폼 전체 데이터 현황</div>
+            <div style="color:#64748b;font-size:11px;margin-top:2px" id="ac-timestamp">Trino 실시간 조회 중...</div>
+          </div>
+          <button onclick="document.getElementById('agent-catalog-modal').style.display='none'"
+            style="color:#64748b;font-size:20px;background:none;border:none;cursor:pointer;padding:0 6px">✕</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:14px 20px;border-bottom:1px solid #1f2937">
+          <div style="background:#1f2937;border-radius:10px;padding:10px 12px">
+            <div style="color:#64748b;font-size:10px">조회 상태</div>
+            <div style="color:#f1f5f9;font-weight:700;font-size:13px;margin-top:4px" id="ac-status">로딩 중...</div>
+          </div>
+          <div style="background:#1f2937;border-radius:10px;padding:10px 12px">
+            <div style="color:#64748b;font-size:10px">활성 테이블</div>
+            <div style="color:#f1f5f9;font-weight:700;font-size:16px;margin-top:4px" id="ac-tables">—</div>
+          </div>
+          <div style="background:#1f2937;border-radius:10px;padding:10px 12px">
+            <div style="color:#64748b;font-size:10px">실제 총 건수</div>
+            <div style="color:#f1f5f9;font-weight:700;font-size:16px;margin-top:4px" id="ac-rows">—</div>
+          </div>
+          <div style="background:#1f2937;border-radius:10px;padding:10px 12px">
+            <div style="color:#64748b;font-size:10px">조회 시각</div>
+            <div style="color:#94a3b8;font-size:11px;margin-top:4px" id="ac-time">—</div>
+          </div>
+        </div>
+        <div id="ac-loading" style="flex:1;display:flex;align-items:center;justify-content:center;padding:40px">
+          <div style="text-align:center">
+            <div style="width:24px;height:24px;border:2px solid #334155;border-top-color:#6366f1;
+                        border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 10px"></div>
+            <div style="color:#64748b;font-size:13px">Trino 쿼리 실행 중... (최대 60초 소요)</div>
+          </div>
+        </div>
+        <div id="ac-body" style="display:none;flex:1;overflow-y:auto;padding:16px 20px;gap:20px;flex-direction:column"></div>
+        <div id="ac-chart-wrap" style="display:none;padding:0 20px 16px">
+          <div id="ac-chart" style="height:180px"></div>
+        </div>
+      </div>`;
+    modal.addEventListener('click', e => {
+      if (e.target === modal) modal.style.display = 'none';
+    });
+    document.body.appendChild(modal);
+  } else {
+    modal.style.display = 'flex';
+  }
+  if (!_catalogLoaded) _loadCatalog();
+}
+
+function _fmtNum(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return n.toLocaleString();
+}
+
+async function _loadCatalog() {
+  try {
+    const res = await fetch('/api/data-catalog');
+    const data = await res.json();
+    _renderCatalog(data);
+    _catalogLoaded = true;
+  } catch(e) {
+    document.getElementById('ac-loading').innerHTML =
+      `<div style="color:#f87171;font-size:13px">오류: ${e.message}</div>`;
+  }
+}
+
+function _renderCatalog(data) {
+  document.getElementById('ac-status').textContent = '✅ 조회 완료';
+  document.getElementById('ac-status').style.color = '#4ade80';
+  document.getElementById('ac-tables').textContent = data.total_tables + ' 개';
+  document.getElementById('ac-rows').textContent = _fmtNum(data.total_rows) + ' 건';
+  document.getElementById('ac-time').textContent = data.generated_at;
+  document.getElementById('ac-timestamp').textContent =
+    `실제 Trino 쿼리 기준 · ${data.generated_at}`;
+  document.getElementById('ac-loading').style.display = 'none';
+
+  const body = document.getElementById('ac-body');
+  body.style.display = 'flex';
+  body.innerHTML = data.workspaces.map(ws => {
+    const active = ws.tables.filter(t => t.status==='active').length;
+    return `<div style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="font-size:16px">${esc(ws.icon)}</span>
+        <span style="color:#f1f5f9;font-weight:600;font-size:13px">${esc(ws.name)}</span>
+        <span style="font-size:10px;padding:2px 8px;border-radius:99px;background:#1f2937;color:#94a3b8">${active}/${ws.tables.length} 활성</span>
+        <span style="font-size:10px;padding:2px 8px;border-radius:99px;background:#1e3a5f;color:#38bdf8">${_fmtNum(ws.total_rows)} 건</span>
+        ${ws.note ? `<span style="font-size:10px;color:#fb923c">ℹ ${esc(ws.note)}</span>` : ''}
+      </div>
+      <div style="border:1px solid #374151;border-radius:10px;overflow:hidden">
+        <table style="width:100%;font-size:11px;border-collapse:collapse">
+          <thead>
+            <tr style="background:#1f2937">
+              <th style="text-align:left;padding:7px 10px;color:#64748b;font-weight:500">테이블명</th>
+              <th style="text-align:left;padding:7px 10px;color:#64748b;font-weight:500">영문명</th>
+              <th style="text-align:left;padding:7px 10px;color:#64748b;font-weight:500">설명</th>
+              <th style="text-align:right;padding:7px 10px;color:#64748b;font-weight:500">건수</th>
+              <th style="text-align:center;padding:7px 10px;color:#64748b;font-weight:500">상태</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${ws.tables.map((t,i) => `
+              <tr style="background:${i%2===0?'#0f172a':'#111827'}">
+                <td style="padding:6px 10px;color:#e2e8f0;font-weight:500">${esc(t.table_kr)}</td>
+                <td style="padding:6px 10px;color:#64748b;font-family:monospace">${esc(t.table_en)}</td>
+                <td style="padding:6px 10px;color:#64748b">${esc(t.desc)}</td>
+                <td style="padding:6px 10px;text-align:right;font-family:monospace;
+                           color:${t.row_count>0?'#22d3ee':'#334155'}">
+                  ${t.row_count>0 ? _fmtNum(t.row_count) : '—'}
+                </td>
+                <td style="padding:6px 10px;text-align:center;color:${t.status==='active'?'#4ade80':'#334155'}">
+                  ${t.status==='active' ? '● 활성' : '○ 미생성'}
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+
+  // 차트
+  const wrap = document.getElementById('ac-chart-wrap');
+  wrap.style.display = 'block';
+  const labels=[], values=[], colors=[];
+  data.workspaces.forEach(ws => {
+    ws.tables.forEach(t => {
+      if (t.row_count > 0) {
+        labels.push(t.table_kr || t.table_en);
+        values.push(t.row_count);
+        colors.push(
+          ws.catalog==='tpcds'      ? '#6366f1' :
+          ws.catalog==='postgresql' ? '#4ade80' : '#22d3ee'
+        );
+      }
+    });
+  });
+  if (typeof Plotly !== 'undefined') {
+    Plotly.newPlot('ac-chart', [{
+      type:'bar', x:labels, y:values, marker:{color:colors},
+      hovertemplate:'<b>%{x}</b><br>%{y:,} 건<extra></extra>',
+    }], {
+      paper_bgcolor:'transparent', plot_bgcolor:'transparent',
+      margin:{t:8,b:55,l:45,r:8},
+      xaxis:{tickfont:{color:'#64748b',size:9},gridcolor:'#1e293b'},
+      yaxis:{tickfont:{color:'#64748b',size:9},gridcolor:'#1e293b'},
+      showlegend:false,
+    }, {responsive:true,displayModeBar:false});
+  }
+}
+document.addEventListener('keydown', e => {
+  const m = document.getElementById('agent-catalog-modal');
+  if (e.key==='Escape' && m) m.style.display='none';
+});
 </script>
 </body>
 </html>

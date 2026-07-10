@@ -118,9 +118,15 @@
         <h1 class="text-white font-semibold" id="main-title">분석 채팅</h1>
         <p class="text-xs text-slate-500 mt-0.5" id="main-subtitle"></p>
       </div>
-      <button onclick="clearChat()" class="text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 transition">
-        대화 초기화
-      </button>
+      <div class="flex items-center gap-2">
+        <button onclick="openDataCatalog()" class="text-xs text-slate-400 hover:text-cyan-300 px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-cyan-700 transition flex items-center gap-1">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V7c0-2-1-3-3-3H7C5 4 4 5 4 7zm0 5h16M9 4v16"/></svg>
+          데이터 현황
+        </button>
+        <button onclick="clearChat()" class="text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 transition">
+          대화 초기화
+        </button>
+      </div>
     </div>
 
     <!-- 채팅 영역 -->
@@ -137,6 +143,57 @@
         </div>
       </div><!-- /welcome-msg -->
     </div><!-- /chat -->
+
+    <!-- ── 데이터 현황 모달 ──────────────────────────────────────── -->
+    <div id="catalog-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.7)">
+      <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-5xl max-h-[88vh] flex flex-col shadow-2xl">
+        <!-- 헤더 -->
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+          <div>
+            <h2 class="text-white font-semibold text-base">📊 플랫폼 전체 데이터 현황</h2>
+            <p class="text-xs text-slate-400 mt-0.5" id="catalog-generated-at">Trino에서 실시간 조회 중...</p>
+          </div>
+          <button onclick="closeCatalog()" class="text-slate-400 hover:text-white text-xl leading-none px-2">✕</button>
+        </div>
+
+        <!-- 요약 카드 -->
+        <div class="px-6 py-4 border-b border-slate-800 grid grid-cols-4 gap-3" id="catalog-summary">
+          <div class="bg-slate-800 rounded-xl p-3 flex flex-col gap-1">
+            <span class="text-xs text-slate-400">조회 상태</span>
+            <span class="text-white font-bold text-sm" id="cat-status">로딩 중...</span>
+          </div>
+          <div class="bg-slate-800 rounded-xl p-3 flex flex-col gap-1">
+            <span class="text-xs text-slate-400">활성 테이블 수</span>
+            <span class="text-white font-bold text-lg" id="cat-tables">—</span>
+          </div>
+          <div class="bg-slate-800 rounded-xl p-3 flex flex-col gap-1">
+            <span class="text-xs text-slate-400">실제 총 건수</span>
+            <span class="text-white font-bold text-lg" id="cat-rows">—</span>
+          </div>
+          <div class="bg-slate-800 rounded-xl p-3 flex flex-col gap-1">
+            <span class="text-xs text-slate-400">조회 시각</span>
+            <span class="text-slate-300 text-xs" id="cat-time">—</span>
+          </div>
+        </div>
+
+        <!-- 로딩 스피너 -->
+        <div id="catalog-loading" class="flex-1 flex items-center justify-center py-16">
+          <div class="text-center">
+            <div class="spinner mx-auto mb-3"></div>
+            <p class="text-slate-400 text-sm">Trino 쿼리 실행 중... (최대 60초 소요)</p>
+          </div>
+        </div>
+
+        <!-- 테이블 목록 본문 -->
+        <div id="catalog-body" class="hidden flex-1 overflow-y-auto px-6 py-4 space-y-6"></div>
+
+        <!-- 차트 -->
+        <div id="catalog-chart-wrap" class="hidden px-6 pb-4">
+          <div id="catalog-chart" style="height:200px"></div>
+        </div>
+      </div>
+    </div>
+    <!-- ── /데이터 현황 모달 ──────────────────────────────────────── -->
 
     <!-- 입력창 -->
     <div class="flex-shrink-0 p-4 border-t border-slate-800">
@@ -895,8 +952,135 @@
 
   // ── 페이지 초기화 ────────────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', () => {
-    // 기본 워크스페이스 초기화
     switchWorkspace(currentWorkspace);
+  });
+
+  // ── 데이터 현황 모달 ─────────────────────────────────────────────────────────
+  let _catalogLoaded = false;
+
+  function openDataCatalog() {
+    document.getElementById('catalog-modal').classList.remove('hidden');
+    if (!_catalogLoaded) loadCatalog();
+  }
+
+  function closeCatalog() {
+    document.getElementById('catalog-modal').classList.add('hidden');
+  }
+
+  async function loadCatalog() {
+    try {
+      const res = await fetch('/api/data-catalog');
+      const data = await res.json();
+      renderCatalog(data);
+      _catalogLoaded = true;
+    } catch(e) {
+      document.getElementById('catalog-loading').innerHTML =
+        `<p class="text-red-400 text-sm">오류: ${e.message}</p>`;
+    }
+  }
+
+  function fmtNum(n) {
+    if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+    return n.toLocaleString();
+  }
+
+  function renderCatalog(data) {
+    // 요약 카드
+    document.getElementById('cat-status').textContent = '✅ 조회 완료';
+    document.getElementById('cat-status').style.color = '#4ade80';
+    document.getElementById('cat-tables').textContent = data.total_tables + ' 개';
+    document.getElementById('cat-rows').textContent = fmtNum(data.total_rows) + ' 건';
+    document.getElementById('cat-time').textContent = data.generated_at;
+    document.getElementById('catalog-generated-at').textContent =
+      `실제 Trino 쿼리 기준 · ${data.generated_at}`;
+
+    // 로딩 숨김
+    document.getElementById('catalog-loading').classList.add('hidden');
+
+    // 본문 렌더링
+    const body = document.getElementById('catalog-body');
+    body.classList.remove('hidden');
+    body.innerHTML = data.workspaces.map(ws => {
+      const totalRows = ws.tables.reduce((s,t) => s + t.row_count, 0);
+      const activeCount = ws.tables.filter(t => t.status === 'active').length;
+      return `
+        <div>
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-lg">${escHtml(ws.icon)}</span>
+            <span class="text-white font-semibold text-sm">${escHtml(ws.name)}</span>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-slate-700 text-slate-300">${activeCount}/${ws.tables.length} 테이블 활성</span>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-indigo-900 text-indigo-300">${fmtNum(totalRows)} 건</span>
+            ${ws.error ? `<span class="text-xs text-red-400">⚠ ${escHtml(ws.error)}</span>` : ''}
+            ${ws.note ? `<span class="text-xs text-amber-400 ml-1">ℹ ${escHtml(ws.note)}</span>` : ''}
+          </div>
+          <div class="rounded-xl border border-slate-700 overflow-hidden">
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="bg-slate-800 text-slate-400">
+                  <th class="text-left px-3 py-2 font-medium">테이블명 (한)</th>
+                  <th class="text-left px-3 py-2 font-medium">영문 테이블명</th>
+                  <th class="text-left px-3 py-2 font-medium hidden sm:table-cell">설명</th>
+                  <th class="text-right px-3 py-2 font-medium">건수</th>
+                  <th class="text-right px-3 py-2 font-medium hidden sm:table-cell">컬럼수</th>
+                  <th class="text-center px-3 py-2 font-medium">상태</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${ws.tables.map((t, i) => `
+                  <tr class="${i % 2 === 0 ? 'bg-slate-900' : 'bg-slate-850'} hover:bg-slate-800 transition">
+                    <td class="px-3 py-2 text-white font-medium">${escHtml(t.table_kr)}</td>
+                    <td class="px-3 py-2 text-slate-400 font-mono">${escHtml(t.table_en)}</td>
+                    <td class="px-3 py-2 text-slate-400 hidden sm:table-cell">${escHtml(t.desc)}</td>
+                    <td class="px-3 py-2 text-right font-mono ${t.row_count > 0 ? 'text-cyan-300' : 'text-slate-600'}">
+                      ${t.row_count > 0 ? fmtNum(t.row_count) : '—'}
+                    </td>
+                    <td class="px-3 py-2 text-right text-slate-400 hidden sm:table-cell">
+                      ${t.col_count > 0 ? t.col_count : '—'}
+                    </td>
+                    <td class="px-3 py-2 text-center">
+                      ${t.status === 'active'
+                        ? '<span class="text-green-400 text-xs">● 활성</span>'
+                        : '<span class="text-slate-600 text-xs">○ 미생성</span>'}
+                    </td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+    }).join('');
+
+    // 막대 차트
+    const chartWrap = document.getElementById('catalog-chart-wrap');
+    chartWrap.classList.remove('hidden');
+    const labels = [], values = [], colors = [];
+    data.workspaces.forEach(ws => {
+      ws.tables.forEach(t => {
+        if (t.row_count > 0) {
+          labels.push(t.table_kr || t.table_en);
+          values.push(t.row_count);
+          colors.push(
+            ws.catalog === 'tpcds'      ? '#6366f1' :
+            ws.catalog === 'postgresql' ? '#4ade80' : '#22d3ee'
+          );
+        }
+      });
+    });
+    Plotly.newPlot('catalog-chart', [{
+      type: 'bar', x: labels, y: values, marker: { color: colors },
+      hovertemplate: '<b>%{x}</b><br>%{y:,} 건<extra></extra>',
+    }], {
+      paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+      margin: { t: 10, b: 60, l: 50, r: 10 },
+      xaxis: { tickfont: { color: '#94a3b8', size: 10 }, gridcolor: '#1e293b' },
+      yaxis: { tickfont: { color: '#94a3b8', size: 10 }, gridcolor: '#1e293b' },
+      showlegend: false,
+    }, { responsive: true, displayModeBar: false });
+  }
+
+  // ESC로 모달 닫기
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeCatalog();
   });
   </script>
 </body>
