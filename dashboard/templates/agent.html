@@ -415,6 +415,12 @@
                      transition:all 0.15s">
         🎖 육군 국방데이터 온톨로지 분석
       </button>
+      <button class="agent-ws-btn" data-ws="scenario" onclick="switchAgentWorkspace('scenario')"
+              style="padding:7px 10px;border-radius:7px;font-size:12px;cursor:pointer;
+                     border:1px solid #374151;background:#111827;color:#6b7280;text-align:left;
+                     transition:all 0.15s">
+        🛡 육군 방어 및 대응전략 시뮬레이션
+      </button>
     </div>
   </div>
 
@@ -563,6 +569,20 @@ const WS_META = {
       { icon: '👮', title: '인원 현황 분석',        sub: '계급별·병과별 인원 분포',          query: '인원 현황을 분석해줘' },
       { icon: '⚔️', title: '작전개념 분석',        sub: '작전 유형별 임무 개념 현황',        query: '작전개념을 분석해줘' },
       { icon: '📦', title: '군수 보급 분석',        sub: '보급품 분류별 재고·창고 현황',      query: '군수 보급을 분석해줘' },
+    ],
+  },
+  scenario: {
+    icon: '🛡',
+    name: '육군 방어 및 대응전략 시뮬레이션',
+    sub: '북한 도발 시나리오(15M건) 기반 방어 명령·탐지 트렌드·대응 시간을 분석합니다.<br/>자연어로 질문하면 실시간 전술 분석 결과를 보여드립니다.',
+    color: '#1a1f2e', textColor: '#86efac',
+    examples: [
+      { icon: '🔭', title: '위협 탐지 전체 개요',   sub: '구역별·자산유형별 탐지 건수 현황',  query: '위협 탐지 전체 개요를 보여줘' },
+      { icon: '📡', title: '북한 도발 탐지 트렌드', sub: '일별 도발 활동 추이 분석',          query: '북한 도발 탐지 트렌드를 분석해줘' },
+      { icon: '🪖', title: '방어 명령 대응 현황',   sub: '군단별·경계태세별 대응 명령',        query: '방어 명령 대응 현황을 분석해줘' },
+      { icon: '⏱', title: '탐지-대응 교차 분석',   sub: '구역별 평균 대응 시간(분) 비교',    query: '구역별 탐지 대응 교차 분석을 해줘' },
+      { icon: '🌙', title: '시간대별 도발 패턴',    sub: '0~23시 활동 집중 시간대 분석',      query: '시간대별 도발 패턴을 분석해줘' },
+      { icon: '🚨', title: '경계태세 발령 분석',    sub: '진돗개하나·경계태세강화 격상 현황',  query: '경계태세 발령 현황을 분석해줘' },
     ],
   },
 };

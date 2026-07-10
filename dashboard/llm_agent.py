@@ -139,6 +139,16 @@ _DOMAIN_ARMY = """\
 - 작전수행: 작전 유형(공격·방어·특수)별 임무 개념, C4I 연계
 - 군수지원: 보급품 분류·재고율, 창고 현황"""
 
+_DOMAIN_SCENARIO = """\
+## 주요 데이터 도메인 (북한 도발 대응 시뮬레이션)
+- north_korea_movements: 북한 자산(병력·포병장비·무인기) 탐지 첩보 — 50,000건
+  · intel_id, sector(서부/중부/동부전선), asset_type, activity_details, detection_time
+- defense_orders: 한국군 방어 명령 — 10,000건
+  · order_id, target_corps(1/5/7군단·수도군단), readiness_level(진돗개하나·경계태세강화), issue_time
+- nk_drone_tracks: 북한 드론 비행 궤적 Iceberg Parquet — 5,000,000건
+- artillery_fire_logs: 한국군 대응 포격 기록 Iceberg Parquet — 10,000,000건
+분석 스키마: postgresql.military_scenario (Trino), iceberg.telemetry_scenario (Trino)"""
+
 
 class TrinoLLMAgent:
     """Ollama 기반 Trino 분석 에이전트."""
@@ -170,7 +180,10 @@ class TrinoLLMAgent:
             f"  {a['id']}: {a['name']} — {a['description']}" for a in self.analyses
         )
         # 워크스페이스 종류에 따라 도메인 컨텍스트 선택
-        if "육군" in self.workspace_name or "army" in self.workspace_name.lower():
+        ws_lower = self.workspace_name.lower()
+        if "시뮬레이션" in self.workspace_name or "scenario" in ws_lower or "방어" in self.workspace_name:
+            domain_ctx = _DOMAIN_SCENARIO
+        elif "육군" in self.workspace_name or "army" in ws_lower:
             domain_ctx = _DOMAIN_ARMY
         else:
             domain_ctx = _DOMAIN_TPCDS

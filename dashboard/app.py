@@ -1,6 +1,6 @@
 """
 Trino 자연어 분석 대시보드 + LLM 에이전트 
-워크스페이스: TPC-DS sf1 / 육군 국방데이터 온톨로지
+워크스페이스: TPC-DS sf1 / 육군 국방데이터 온톨로지 / 육군 방어 및 대응전략 시뮬레이션
 """
 import json
 import os
@@ -16,8 +16,9 @@ TRINO_URL = os.environ.get("TRINO_URL", "http://localhost:8080")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 LLM_MODEL = os.environ.get("LLM_MODEL", "qwen2.5:3b")
 _BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
-SQL_DIR       = os.path.join(_BASE_DIR, "..", "sql")
-ARMY_SQL_DIR  = os.path.join(_BASE_DIR, "..", "sql", "army")
+SQL_DIR          = os.path.join(_BASE_DIR, "..", "sql")
+ARMY_SQL_DIR     = os.path.join(_BASE_DIR, "..", "sql", "army")
+SCENARIO_SQL_DIR = os.path.join(_BASE_DIR, "..", "sql", "scenario")
 
 # ── 분석 목록 정의 ─────────────────────────────────────────────────────────────
 # keywords: 자연어 입력과 매칭할 한국어 키워드 목록
@@ -168,6 +169,22 @@ ANALYSES = [
 # ── 육군 국방데이터 온톨로지 분석 목록 ────────────────────────────────────────
 ANALYSES_ARMY = [
     {
+        "id": "ATI",
+        "name": "전체 테이블 정보",
+        "keywords": [
+            "전체 테이블", "테이블 정보", "테이블 목록", "테이블 구조", "어떤 테이블",
+            "스키마", "컬럼 정보", "개요", "전체 목록", "데이터 구조", "도메인 목록",
+            "도메인 구조", "온톨로지 구조", "테이블이 뭐", "테이블별",
+        ],
+        "description": "육군 국방데이터 온톨로지 도메인별 개념 수·속성 수·핵심 설명을 한눈에 요약합니다.",
+        "chart_type": "bar",
+        "chart_x": "도메인명",
+        "chart_y": "개념수",
+        "query_index": 0,
+        "catalog": "tpch",
+        "schema": "tiny",
+    },
+    {
         "id": "A00",
         "name": "국방 온톨로지 개요",
         "keywords": ["온톨로지", "개요", "전체 구조", "개념 체계", "도메인"],
@@ -241,6 +258,98 @@ ANALYSES_ARMY = [
     },
 ]
 
+# ── 육군 방어 및 대응전략 시뮬레이션 분석 목록 ────────────────────────────────
+ANALYSES_SCENARIO = [
+    {
+        "id": "STI",
+        "name": "전체 테이블 정보",
+        "keywords": [
+            "전체 테이블", "테이블 정보", "테이블 목록", "테이블 구조", "어떤 테이블",
+            "스키마", "컬럼 정보", "개요", "전체 목록", "데이터 구조",
+            "테이블이 뭐", "테이블별", "시나리오 구조", "데이터 현황",
+        ],
+        "description": "방어 시뮬레이션 스키마의 테이블별 건수·컬럼 수·핵심 설명을 한눈에 요약합니다.",
+        "chart_type": "bar",
+        "chart_x": "테이블명",
+        "chart_y": "건수",
+        "query_index": 0,
+        "catalog": "postgresql",
+        "schema": "military_scenario",
+    },
+    {
+        "id": "S00",
+        "name": "위협 탐지 전체 개요",
+        "keywords": ["위협", "개요", "탐지", "전체", "구역", "현황"],
+        "description": "구역별·자산유형별 북한 위협 탐지 건수 전체 현황을 분석합니다.",
+        "chart_type": "bar",
+        "chart_x": "구역",
+        "chart_y": "탐지건수",
+        "query_index": 0,
+        "catalog": "postgresql",
+        "schema": "military_scenario",
+    },
+    {
+        "id": "S01",
+        "name": "북한 도발 탐지 트렌드",
+        "keywords": ["도발", "트렌드", "추이", "일별", "탐지", "북한"],
+        "description": "일별 도발 탐지 건수 및 자산유형별(병력·포병·무인기) 분포 추이를 분석합니다.",
+        "chart_type": "line",
+        "chart_x": "탐지일자",
+        "chart_y": "탐지건수",
+        "query_index": 0,
+        "catalog": "postgresql",
+        "schema": "military_scenario",
+    },
+    {
+        "id": "S02",
+        "name": "방어 명령 대응 현황",
+        "keywords": ["방어", "명령", "군단", "경계", "태세", "대응"],
+        "description": "군단별·경계태세별 방어 명령 발령 현황과 대응 강도를 분석합니다.",
+        "chart_type": "bar",
+        "chart_x": "담당군단",
+        "chart_y": "명령건수",
+        "query_index": 0,
+        "catalog": "postgresql",
+        "schema": "military_scenario",
+    },
+    {
+        "id": "S03",
+        "name": "구역별 탐지-대응 교차 분석",
+        "keywords": ["교차", "대응시간", "응답", "구역별", "시간차", "분석"],
+        "description": "구역별 탐지 건수 대비 방어 명령 수와 평균 대응 시간(분)을 비교합니다.",
+        "chart_type": "bar",
+        "chart_x": "구역",
+        "chart_y": "평균대응시간_분",
+        "query_index": 0,
+        "catalog": "postgresql",
+        "schema": "military_scenario",
+    },
+    {
+        "id": "S04",
+        "name": "시간대별 도발 패턴",
+        "keywords": ["시간대", "패턴", "야간", "새벽", "집중", "시간"],
+        "description": "0~23시 시간대별 도발 활동 집중도와 활동 구역 수를 분석합니다.",
+        "chart_type": "bar",
+        "chart_x": "시간대",
+        "chart_y": "탐지건수",
+        "query_index": 0,
+        "catalog": "postgresql",
+        "schema": "military_scenario",
+    },
+    {
+        "id": "S05",
+        "name": "경계태세 발령 분석",
+        "keywords": ["경계태세", "진돗개", "발령", "격상", "시간별"],
+        "description": "시간 흐름에 따른 경계태세 격상 현황과 적용 군단 수를 분석합니다.",
+        "chart_type": "line",
+        "chart_x": "발령시간",
+        "chart_y": "발령건수",
+        "query_index": 0,
+        "catalog": "postgresql",
+        "schema": "military_scenario",
+    },
+]
+
 # ── 워크스페이스 정의 ─────────────────────────────────────────────────────────
 WORKSPACES = {
     "tpcds": {
@@ -258,6 +367,14 @@ WORKSPACES = {
         "description": "육군 국방데이터의 온톨로지 기반 구조·인원·장비·작전 분석",
         "sql_dir":     ARMY_SQL_DIR,
         "analyses":    ANALYSES_ARMY,
+    },
+    "scenario": {
+        "id":          "scenario",
+        "name":        "육군 방어 및 대응전략 시뮬레이션",
+        "icon":        "🛡",
+        "description": "북한 도발 시나리오 기반 방어 명령·탐지 트렌드·대응 시간 분석 (15M건 시뮬레이션)",
+        "sql_dir":     SCENARIO_SQL_DIR,
+        "analyses":    ANALYSES_SCENARIO,
     },
 }
 
